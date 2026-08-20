@@ -1,0 +1,576 @@
+{
+  "version": 1,
+  "source": {
+    "benchmark": "GDPval-AA v2, Artificial Analysis",
+    "url": "https://artificialanalysis.ai/evaluations/gdpval-aa",
+    "score": "Elo from blind pairwise judging of complete work deliverables over 220 GDPval tasks in an agentic harness, anchored so a human expert scores 1000. 95% CIs run about +/-15 to +/-27, so gaps under ~35 Elo are not separable.",
+    "price": "USD per GDPval task, as Artificial Analysis measured it on the same runs.",
+    "built_by": "tools/build_ladder.py",
+    "captured": "2026-08-20"
+  },
+  "note": "One finished dial per set of providers: level 10 down to level 0, already reduced to the leftmost models on the score-versus-price graph. Each level is walked down and to the left of the one above, so a step down is always cheaper and never a sideways move. 'model' and 'effort' go to the CLI verbatim; an empty effort means the flag is not passed. There is one dial per provider set because losing a provider puts models back on the dial that another vendor's were shadowing.",
+  "caveats": [
+    "Left out because Artificial Analysis has no GDPval-AA v2 score for them: gpt-5.3-codex-spark, gemini-3.1-pro-high/low (only a Preview build is scored), claude-opus-4-6-thinking, gpt-oss-120b-medium (only high and low are scored), gemini-3.6-flash and gemini-3.5-flash below high.",
+    "Left out because AA scores them but publishes no cost: claude-sonnet-5 below max effort.",
+    "claude-fable-5 is left out: AA's only Fable 5 row is a router that can serve Claude Opus 4.8, so its Elo does not describe what `claude --model claude-fable-5` runs.",
+    "claude-sonnet-4-6 through agy is left out: AA measured it at max effort and agy exposes no effort control, so the score may not describe what the CLI runs.",
+    "claude-haiku-4-5-20251001 carries no effort because AA scored one 'Reasoning' configuration with no effort split.",
+    "Gemini prices are promotional through 2026-12-31 and double on 2027-01-01, which will move those points right. AA also measured Gemini through Google's own API, not through agy.",
+    "AA bills OpenAI cache writes at 1.25x input, which OpenAI's own rate card does not charge, so GPT-5.6 costs run about 3% high. It is applied consistently, so the ordering is unaffected."
+  ],
+  "ladders": {
+    "claude": {
+      "0": {
+        "provider": "claude",
+        "model": "claude-haiku-4-5-20251001",
+        "effort": "",
+        "score": 913.5,
+        "price": 0.1907
+      },
+      "1": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "score": 1457.4,
+        "price": 0.5817
+      },
+      "2": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "score": 1457.4,
+        "price": 0.5817
+      },
+      "3": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "score": 1457.4,
+        "price": 0.5817
+      },
+      "4": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "medium",
+        "score": 1619.6,
+        "price": 1.3641
+      },
+      "5": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "6": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "7": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "8": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "xhigh",
+        "score": 1813.8,
+        "price": 4.963
+      },
+      "9": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "score": 1844.7,
+        "price": 6.766
+      },
+      "10": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "score": 1844.7,
+        "price": 6.766
+      }
+    },
+    "openai": {
+      "0": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "score": 1155.6,
+        "price": 0.0072
+      },
+      "1": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "2": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "3": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "score": 1465.8,
+        "price": 0.0412
+      },
+      "4": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "5": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "6": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "max",
+        "score": 1578.3,
+        "price": 0.1022
+      },
+      "7": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "score": 1621.2,
+        "price": 1.3708
+      },
+      "8": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "9": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "10": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "max",
+        "score": 1723.0,
+        "price": 3.4935
+      }
+    },
+    "google": {
+      "0": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-low",
+        "effort": "",
+        "score": 1452.2,
+        "price": 0.391
+      },
+      "1": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-low",
+        "effort": "",
+        "score": 1452.2,
+        "price": 0.391
+      },
+      "2": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-low",
+        "effort": "",
+        "score": 1452.2,
+        "price": 0.391
+      },
+      "3": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "4": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "5": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "6": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "7": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "8": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-high",
+        "effort": "",
+        "score": 1531.5,
+        "price": 1.2478
+      },
+      "9": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-high",
+        "effort": "",
+        "score": 1531.5,
+        "price": 1.2478
+      },
+      "10": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-high",
+        "effort": "",
+        "score": 1531.5,
+        "price": 1.2478
+      }
+    },
+    "claude+openai": {
+      "0": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "score": 1155.6,
+        "price": 0.0072
+      },
+      "1": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "2": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "score": 1465.8,
+        "price": 0.0412
+      },
+      "3": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "4": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "max",
+        "score": 1578.3,
+        "price": 0.1022
+      },
+      "5": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "medium",
+        "score": 1619.6,
+        "price": 1.3641
+      },
+      "6": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "score": 1621.2,
+        "price": 1.3708
+      },
+      "7": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "8": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "9": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "xhigh",
+        "score": 1813.8,
+        "price": 4.963
+      },
+      "10": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "score": 1844.7,
+        "price": 6.766
+      }
+    },
+    "claude+google": {
+      "0": {
+        "provider": "claude",
+        "model": "claude-haiku-4-5-20251001",
+        "effort": "",
+        "score": 913.5,
+        "price": 0.1907
+      },
+      "1": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-low",
+        "effort": "",
+        "score": 1452.2,
+        "price": 0.391
+      },
+      "2": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "score": 1457.4,
+        "price": 0.5817
+      },
+      "3": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "low",
+        "score": 1457.4,
+        "price": 0.5817
+      },
+      "4": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-medium",
+        "effort": "",
+        "score": 1498.3,
+        "price": 0.7622
+      },
+      "5": {
+        "provider": "google",
+        "model": "gemini-3.7-flash-high",
+        "effort": "",
+        "score": 1531.5,
+        "price": 1.2478
+      },
+      "6": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "medium",
+        "score": 1619.6,
+        "price": 1.3641
+      },
+      "7": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "8": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "9": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "xhigh",
+        "score": 1813.8,
+        "price": 4.963
+      },
+      "10": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "score": 1844.7,
+        "price": 6.766
+      }
+    },
+    "google+openai": {
+      "0": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "score": 1155.6,
+        "price": 0.0072
+      },
+      "1": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "2": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "3": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "score": 1465.8,
+        "price": 0.0412
+      },
+      "4": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "5": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "6": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "max",
+        "score": 1578.3,
+        "price": 0.1022
+      },
+      "7": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "score": 1621.2,
+        "price": 1.3708
+      },
+      "8": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "9": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "10": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "max",
+        "score": 1723.0,
+        "price": 3.4935
+      }
+    },
+    "claude+google+openai": {
+      "0": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "score": 1155.6,
+        "price": 0.0072
+      },
+      "1": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "medium",
+        "score": 1274.5,
+        "price": 0.0133
+      },
+      "2": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "score": 1465.8,
+        "price": 0.0412
+      },
+      "3": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "xhigh",
+        "score": 1525.7,
+        "price": 0.0667
+      },
+      "4": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "effort": "max",
+        "score": 1578.3,
+        "price": 0.1022
+      },
+      "5": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "medium",
+        "score": 1619.6,
+        "price": 1.3641
+      },
+      "6": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "score": 1621.2,
+        "price": 1.3708
+      },
+      "7": {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "score": 1678.9,
+        "price": 2.1141
+      },
+      "8": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "score": 1732.8,
+        "price": 3.0271
+      },
+      "9": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "xhigh",
+        "score": 1813.8,
+        "price": 4.963
+      },
+      "10": {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "score": 1844.7,
+        "price": 6.766
+      }
+    }
+  }
+}
