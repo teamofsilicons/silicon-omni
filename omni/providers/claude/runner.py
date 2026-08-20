@@ -154,8 +154,11 @@ class Runner(base.Runner):
             return False
         if model and model != self.config.model and not self.ask("set_model", model=model):
             return False
-        if effort and effort != self.config.effort:
-            if not self.ask("apply_flag_settings", settings={"effortLevel": effort}):
+        if effort != self.config.effort:
+            # An empty effort means "back to the default", and the flag layer is
+            # replaced wholesale — so it has to be sent, not skipped.
+            settings = {"effortLevel": effort} if effort else {}
+            if not self.ask("apply_flag_settings", settings=settings):
                 return False
         self.config.model, self.config.effort = model, effort
         self.stream.model = model

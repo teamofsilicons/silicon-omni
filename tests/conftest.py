@@ -26,6 +26,4 @@ def two_providers():
     weak = rung("alpha", "alpha-small", "low", 900, 1.0)
     strong = rung("beta", "beta-big", "high", 1800, 9.0)
     registry.write_cache(["alpha", "beta"], dial(strong, weak))
-    registry.write_cache(["alpha"], dial(rung("alpha", "alpha-big", "high", 1400, 4.0), weak))
-    registry.write_cache(["beta"], dial(strong, rung("beta", "beta-small", "low", 1100, 2.0)))
     return ["alpha", "beta"]

@@ -17,12 +17,11 @@ def dumps(obj: Any) -> str:
 
 
 def append(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with WRITE, open(path, "a", encoding="utf-8") as fh:
-        fh.write(dumps(obj) + "\n")
+    extend(path, [obj])
 
 
 def extend(path: Path, objs) -> None:
+    """One write, so a reader never sees half a batch."""
     objs = list(objs)
     if not objs:
         return

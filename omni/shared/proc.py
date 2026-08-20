@@ -34,10 +34,6 @@ class LineProcess:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    @property
-    def pid(self) -> int | None:
-        return self.proc.pid if self.proc else None
-
     def start(self) -> "LineProcess":
         self.proc = subprocess.Popen(
             self.argv,

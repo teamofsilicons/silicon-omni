@@ -285,14 +285,12 @@ class Chat:
             self.in_turn = True
             self.state = BUSY
 
-    def attempt(self, why: str) -> bool:
+    def attempt(self, why: str) -> None:
         """Bring a provider up, and survive it refusing to come up."""
         try:
             self.rebuild()
-            return True
         except Exception as exc:
             self.blocked(f"could not start a provider ({why}): {exc!r}")
-            return False
 
     def stranded(self) -> None:
         if self.outbox and not (self.runner and self.runner.alive):

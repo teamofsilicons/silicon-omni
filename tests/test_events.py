@@ -3,10 +3,40 @@
 from omni.events import HISTORY_TYPES, Event
 
 
-def test_the_spec_vocabulary_is_all_there():
-    for name in ("START", "TEXT", "THINKING", "END", "INJECTED", "ERROR", "SWITCH_PROVIDER", "NEW_SESSION"):
-        assert isinstance(getattr(Event, name), str)
+def test_the_wire_strings_are_pinned():
+    """These end up in session files. Renaming one silently breaks reading them."""
+    assert {name: getattr(Event, name) for name in
+            ("START", "TEXT", "THINKING", "END", "INJECTED", "ERROR", "SWITCH_PROVIDER",
+             "NEW_SESSION", "CONFIG")} == {
+        "START": "start",
+        "TEXT": "text",
+        "THINKING": "thinking",
+        "END": "end",
+        "INJECTED": "injected",
+        "ERROR": "error",
+        "SWITCH_PROVIDER": "switch_provider",
+        "NEW_SESSION": "new_session",
+        "CONFIG": "config",
+    }
     assert Event.TOOL.CALL == "tool.call" and Event.TOOL.RESULT == "tool.result"
+
+
+def test_every_failure_gets_the_right_name():
+    """The kind is what a caller branches on, so each bucket needs pinning."""
+    from omni.events import AUTH, CRASH, LIMIT, UNAVAILABLE, classify
+
+    assert classify("OAuth token is invalid") == AUTH
+    assert classify("401 unauthorized") == AUTH
+    assert classify("please sign in") == AUTH
+    assert classify("429 rate limited") == LIMIT
+    assert classify("usageLimitExceeded") == LIMIT
+    assert classify("quota exhausted") == LIMIT
+    assert classify("model overloaded") == UNAVAILABLE
+    assert classify("responseStreamDisconnected") == UNAVAILABLE
+    assert classify("503") == UNAVAILABLE
+    assert classify("timeout waiting for response") == UNAVAILABLE
+    assert classify("segmentation fault") == CRASH
+    assert classify("") == CRASH
 
 
 def test_events_round_trip_through_the_session_file():

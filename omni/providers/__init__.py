@@ -50,14 +50,10 @@ def runner_for(name: str):
     return classes(name)[1]
 
 
-def installed() -> list[str]:
-    return [n for n in names() if account(n).installed]
-
-
 def available(limit_to=None) -> list[str]:
     """Installed *and* logged in — the only providers omni will route to."""
     allowed = set(limit_to) if limit_to else None
     return [n for n in names() if (allowed is None or n in allowed) and account(n).available]
 
 
-__all__ = ["Account", "Runner", "Config", "account", "runner_for", "available", "installed", "register", "names"]
+__all__ = ["Account", "Runner", "Config", "account", "runner_for", "available", "register", "names"]
