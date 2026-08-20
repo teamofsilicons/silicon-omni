@@ -13,12 +13,14 @@ import bundled from "../data/models.json"
 import type { Entry } from "./dial"
 
 const REPO = process.env.OMNI_REPO || "teamofsilicons/silicon-omni"
-const BRANCH = process.env.OMNI_BRANCH || "HEAD"
+// raw.githubusercontent will not resolve HEAD, so this has to name a real
+// branch. Set OMNI_BRANCH to read the list from somewhere other than main.
+const BRANCH = process.env.OMNI_BRANCH || "main"
 const PATH = "docs/data/models.json"
 
 export const SOURCE = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${PATH}`
-export const EDIT = `https://github.com/${REPO}/edit/${BRANCH === "HEAD" ? "main" : BRANCH}/${PATH}`
-export const VIEW = `https://github.com/${REPO}/blob/${BRANCH === "HEAD" ? "main" : BRANCH}/${PATH}`
+export const EDIT = `https://github.com/${REPO}/edit/${BRANCH}/${PATH}`
+export const VIEW = `https://github.com/${REPO}/blob/${BRANCH}/${PATH}`
 
 export interface Graph {
   models: Entry[]

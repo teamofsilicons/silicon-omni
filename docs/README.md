@@ -49,9 +49,13 @@ you the JSON to paste. It writes nothing.
 ## Deploying
 
 Import the repo on Vercel and set the project's **root directory to `docs`**.
-That is all — nothing to provision and no environment variables to set. Set
-`OMNI_REPO` or `OMNI_BRANCH` only if the model list should come from somewhere
-other than `teamofsilicons/silicon-omni` on its default branch.
+That is all — nothing to provision and no environment variables to set.
+
+`OMNI_REPO` and `OMNI_BRANCH` say where the model list is read from, defaulting
+to `teamofsilicons/silicon-omni` on `main`. `OMNI_BRANCH` has to name a real
+branch: `raw.githubusercontent` will not resolve `HEAD`. If the file cannot be
+read from there the site serves the copy compiled into the deployment and says
+so on `/dial`.
 
 ## Pointing omni at it
 
