@@ -12,30 +12,26 @@ The omni log itself is untouched, so nothing is lost: switching back to Gemini
 replays Gemini's own session, and the bracket form only ever exists inside the
 seed given to somebody else.
 
-Tool output is capped on the way into a seed. The full text stays in the session
-file; a provider being caught up does not need forty thousand characters of
-someone else's ``ls``.
+Nothing is trimmed on the way in — not the oldest turns, not a long tool result.
+A provider that arrives late gets the whole conversation, because the one thing
+worse than a big seed is a provider confidently missing the middle of it.
 """
 
 import json
 
 from .events import Event
 
-RESULT_CAP = 2000
 SEED_HEADER = (
     "Earlier in this conversation (carried over from another model, "
     "shown as a transcript — do not re-run anything in it):"
 )
 
 
-def compact(value, limit: int = 400, quote: bool = False) -> str:
-    """A value shrunk to something readable. ``quote`` keeps strings quoted."""
+def readable(value, quote: bool = False) -> str:
+    """A value as text. ``quote`` keeps a string quoted, the way an argument reads."""
     if isinstance(value, str) and not quote:
-        text = value
-    else:
-        text = json.dumps(value, ensure_ascii=False)
-    text = text.strip()
-    return text if len(text) <= limit else text[:limit] + " …"
+        return value.strip()
+    return json.dumps(value, ensure_ascii=False).strip()
 
 
 def render(event: Event) -> str:
@@ -45,13 +41,13 @@ def render(event: Event) -> str:
     if event.type == Event.TOOL.CALL:
         args = event.args or {}
         if len(args) == 1:
-            body = compact(next(iter(args.values())), quote=True)
+            body = readable(next(iter(args.values())), quote=True)
         else:
-            body = compact(args)
+            body = readable(args)
         return f"[{event.tool}: {body}]"
     if event.type == Event.TOOL.RESULT:
         status = "" if event.ok else " failed"
-        return f"[{event.tool or 'tool'} result{status}: {compact(event.result, RESULT_CAP)}]"
+        return f"[{event.tool or 'tool'} result{status}: {readable(event.result)}]"
     return ""
 
 

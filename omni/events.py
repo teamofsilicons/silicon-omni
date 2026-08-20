@@ -54,6 +54,19 @@ class Event:
     ``NEW_SESSION``     ``session``, ``extra['native']``
     ``CONFIG``          ``text`` — what changed, ``extra`` — the new value
     ==================  ====================================================
+
+    Three fields are on every event whatever its type. ``session`` is the omni
+    session it belongs to, ``at`` is when it happened, and ``seq`` is its
+    position in that session's log — a number that only goes up, and never
+    repeats, across every provider the conversation has passed through.
+
+    ``seq`` is how omni knows what a provider still has to be told: the meta
+    file records the last one each provider saw, so coming back to one replays
+    exactly the events recorded since, and nothing twice.
+
+    ``CONFIG`` is the catch-all for settings and bookkeeping. Its ``text`` says
+    which: ``launch``, ``retune``, ``reseed``, ``stop``, ``provider_removed``,
+    ``unsupported``, ``approximated``, or the name of whatever call you made.
     """
 
     # ---- types ----

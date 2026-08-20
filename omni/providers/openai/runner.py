@@ -21,6 +21,11 @@ from .stream import Stream
 SANDBOX = "danger-full-access"
 APPROVALS = "never"
 
+#: Never a switch: ``AGENTS.md`` and friends would make the same run mean
+#: different things depending on whose directory it started in.
+NO_MEMORIES = ["-c", "project_doc_max_bytes=0"]
+NO_SUBAGENTS = ["--disable", "apps", "--disable", "plugins", "-c", "agents.enabled=false"]
+
 
 def items(turns: list[dict]) -> list[dict]:
     """omni turns as Codex ``ResponseItem``s."""
@@ -69,15 +74,12 @@ class Runner(base.Runner):
             self.server.call("thread/inject_items", {"threadId": self.native_id, "items": items(seed)})
 
     def flags(self) -> list[str]:
-        """MCP is already gone with the jail; this is the subagent side of it."""
-        if not self.config.disable_subagents:
-            return []
-        return [
-            "--disable", "apps",
-            "--disable", "plugins",
-            "-c", "agents.enabled=false",
-            "-c", "project_doc_max_bytes=0",
-        ]
+        """MCP is already gone with the jail; this is everything else.
+
+        Project docs go regardless. Subagents are the only part you can ask for
+        back, and asking must not quietly bring the memories with them.
+        """
+        return (NO_SUBAGENTS if self.config.disable_subagents else []) + NO_MEMORIES
 
     def settings(self) -> dict:
         body = {

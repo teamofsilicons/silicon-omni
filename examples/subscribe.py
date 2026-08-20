@@ -12,7 +12,6 @@ from omni import Event, Inference
 
 chat = Inference.load_or_create_session("subscribe-example")
 chat.intelligence(7)
-chat.disable_subagents()
 
 stop = asyncio.Event()
 

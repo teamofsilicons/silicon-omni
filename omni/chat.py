@@ -16,9 +16,9 @@ import threading
 from dataclasses import asdict, replace
 from typing import Callable, Sequence
 
-from .events import CRASH, Event
+from .events import AUTH, CRASH, Event
 from .intelligence import resolve
-from .providers import runner_for
+from .providers import account, runner_for
 from .providers.base import Config
 from .session import Lock, Meta, Store
 from .shared.bus import Bus
@@ -29,6 +29,9 @@ BUSY = "busy"
 STOPPED = "stopped"
 
 MODEL_EVENTS = (Event.TEXT, Event.THINKING, Event.TOOL.CALL, Event.TOOL.RESULT)
+
+#: Errors that end the turn rather than just being reported.
+FATAL = (AUTH, CRASH)
 
 
 class Chat:
@@ -55,6 +58,7 @@ class Chat:
         self.outbox: list[str] = []
         self.in_turn = False
         self.stopping = False
+        self.autoremove = True
         self.state = IDLE
 
     # ------------------------------------------------------------------ setup
@@ -90,14 +94,38 @@ class Chat:
         self.append_system_prompt(open(path, encoding="utf-8").read())
 
     def disable_subagents(self) -> None:
-        """No provider-side subagents, so only the workers you define get used."""
+        """No provider-side subagents, so only the workers you define get used.
+
+        Already the default; here so asking for it out loud still reads.
+        """
         self.config.disable_subagents = True
-        self.note("disable_subagents")
+        self.note("subagents", on=False)
+
+    def enable_subagents(self) -> None:
+        """Let the provider spawn its own subagents. Off unless you ask."""
+        self.config.disable_subagents = False
+        self.note("subagents", on=True)
 
     def disable_mcp(self) -> None:
-        """No MCP servers, no external connectors."""
+        """No MCP servers, no external connectors. Already the default."""
         self.config.disable_mcp = True
-        self.note("disable_mcp")
+        self.note("mcp", on=False)
+
+    def enable_mcp(self) -> None:
+        """Let the provider load its MCP servers and connectors. Off unless you ask."""
+        self.config.disable_mcp = False
+        self.note("mcp", on=True)
+
+    def disable_autoremoving_unauthenticated_providers(self) -> None:
+        """Stop dropping a provider that loses its login mid-run.
+
+        On by default: an unauthenticated CLI cannot finish the turn, so omni
+        takes it off this chat's list and resolves the same intelligence level
+        again over whoever is left. Turn it off and the auth error is reported
+        and the turn simply ends.
+        """
+        self.autoremove = False
+        self.note("autoremove_unauthenticated", on=False)
 
     def cwd(self, path: str) -> None:
         """Where the provider runs its tools.
@@ -222,25 +250,74 @@ class Chat:
 
     def absorb(self, event: Event) -> None:
         self.record(event)
-        if self.stopping:
+        if self.stopping or self.straggler(event):
             return  # still logged, but there is nothing left to react to
         if event.type in MODEL_EVENTS:
             self.state = BUSY
         elif event.type == Event.END:
             self.in_turn = False
             self.finish_turn()
-        elif event.type == Event.ERROR and event.kind == CRASH:
+        elif event.type == Event.ERROR and event.kind in FATAL:
+            self.fatal(event)
+
+    def straggler(self, event: Event) -> bool:
+        """Did this come from a provider omni has already moved on from?
+
+        A dying CLI reports the failure and the end of its turn in one breath.
+        By the time the second one is handled there may be a new provider up,
+        and applying it there would close a turn that is still open — or take
+        down the runner that has just taken over.
+        """
+        return bool(self.runner and event.provider and event.provider != self.runner.name)
+
+    def fatal(self, event: Event) -> None:
+        """An error that ends the turn: a crash, or a login that has gone."""
+        if event.kind == AUTH:
+            self.unauthenticated(event)
+        else:
             self.collapse(event)
 
     def collapse(self, event: Event) -> None:
         """The provider died. Close the turn honestly and let the next send retry."""
+        self.close_turn(event.provider, {"crashed": True})
+
+    def unauthenticated(self, event: Event) -> None:
+        """A provider lost its login mid-run. Take it off the dial and move on.
+
+        The turn is over either way — an unauthenticated CLI cannot finish it.
+        What differs is the next one: by default that provider is dropped from
+        this chat and the same intelligence level is resolved again over the
+        providers that are left, so the conversation carries on somewhere else.
+        """
+        name = event.provider or (self.runner.name if self.runner else "")
+        self.close_turn(name, {"unauthenticated": name})
+        if not (self.autoremove and name in self.providers):
+            return
+        self.providers.remove(name)
+        account(name).forget()  # a login can come back; ask the CLI again next time
+        self.record(
+            Event(
+                type=Event.CONFIG,
+                text="provider_removed",
+                provider=name,
+                extra={"why": "unauthenticated", "left": list(self.providers)},
+            )
+        )
+        if not self.providers:
+            self.blocked("every provider is unauthenticated; log one back in and send again")
+            return
+        self.attempt("provider lost its login")
+        self.flush()
+
+    def close_turn(self, provider: str, extra: dict) -> None:
+        """Put the runner down and end the turn it was in the middle of."""
         if self.runner:
             self.meta.mark_synced(self.runner.name, self.store.seq)
             self.runner.stop()
             self.runner = None
         if self.in_turn:
             self.in_turn = False
-            self.record(Event(type=Event.END, provider=event.provider, extra={"crashed": True}))
+            self.record(Event(type=Event.END, provider=provider, extra=extra))
         self.state = WAITING
 
     def finish_turn(self) -> None:
@@ -339,7 +416,9 @@ class Chat:
                 )
             )
             return
-        previous = self.runner.name if self.runner else ""
+        # ``current`` outlives the runner, so a provider that crashed or lost
+        # its login is still named as the one we came from.
+        previous = self.runner.name if self.runner else (self.current[0] if self.current else "")
         if self.runner:
             # Its ``synced`` mark stays where the last turn left it: anything
             # recorded since then is exactly what it has to be told on the way back.

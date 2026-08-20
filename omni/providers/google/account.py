@@ -11,6 +11,7 @@ called and no quota is spent.
 import json
 import subprocess
 
+from ...shared import clock
 from ..base import Account as Base
 from ..login import Login
 
@@ -41,7 +42,7 @@ def windows(lines: str) -> dict:
             continue
         used = round(1 - float(bucket.get("remaining_fraction", 1)), 4)
         if out[key]["used"] is None or used > out[key]["used"]:
-            out[key] = {"used": used, "reset": bucket.get("reset_time")}
+            out[key] = {"used": used, "reset": clock.iso(bucket.get("reset_time"))}
     return out
 
 

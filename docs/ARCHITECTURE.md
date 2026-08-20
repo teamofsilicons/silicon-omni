@@ -107,10 +107,18 @@ message can never be both seeded into a provider and sent to it.
 `rebuild()`; a failure records an `ERROR` and drops back to `waiting` with the message
 still queued. Hanging in `busy` forever would be worse than saying so.
 
-**A crash closes its turn.** `collapse()` marks the dying provider synced up to what it
-actually saw, stops it (dropping the reference alone would orphan a live CLI), and
-records a synthetic `END` so anything watching for turn boundaries — including the
-caller's own loop — is not left waiting for one that will never come.
+**A dead turn is closed, not left open.** `close_turn()` marks the dying provider synced
+up to what it actually saw, stops it (dropping the reference alone would orphan a live
+CLI), and records a synthetic `END` so anything watching for turn boundaries — including
+the caller's own loop — is not left waiting for one that will never come. A crash and a
+lost login both go through it; only what happens next differs.
+
+**A lost login costs the provider, not the level.** An unauthenticated CLI cannot finish
+its turn, so `unauthenticated()` drops that provider from the chat and resolves the same
+intelligence level again over whoever is left. `current` outlives the runner precisely so
+this still reports as a `SWITCH_PROVIDER` — the provider we came from is named even
+though its runner is already gone. The failed turn is not replayed: it is in the log for
+the next provider to read, but re-driving it could re-run a tool that already ran.
 
 **stderr is not a crash.** Only `exited()` reports `kind="crash"`. A line that merely
 contains the word "error" gets `kind="stderr"`; treating it as a death used to tear down
@@ -158,9 +166,18 @@ there is nothing in between that anybody should pick.
 
 ## Testing
 
-`tests/fake.py` is a provider that is not one: it records what it was seeded with and
-what it was sent, and finishes turns exactly when a test says so. Everything about
-turns, boundaries, injection, switching and seeding is tested through it, offline.
+Two providers that are not providers, for two different jobs.
+
+`tests/fake.py` is the engine's crash-test dummy: it records what it was seeded with and
+what it was sent, and fails or finishes exactly when a test says so. Everything about
+turns, boundaries, injection, switching and failover is driven through it, offline.
+
+`omni.providers.test` ships in the package, because omni's users need the same thing for
+their own tests. It needs no CLI, no login and no quota, answers deterministically, and
+pins its own 0-10 dial so nothing reaches the network. Nothing registers it but an
+explicit `install()`, so it cannot leak into a real `get_available_providers()`.
 
 Adapter tests use lines captured verbatim from real CLI runs. `pytest -m live` runs the
-real thing.
+real thing — against the real `~/.omni`, deliberately, since a test that uses different
+paths from a real run is not testing a real run. `scripts/cleanup.py` takes its sessions,
+jails and working directories back out afterwards.

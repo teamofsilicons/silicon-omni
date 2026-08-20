@@ -31,8 +31,11 @@ class Config:
     effort: str = ""
     system_prompt: str = ""
     append_system_prompt: str = ""
-    disable_subagents: bool = False
-    disable_mcp: bool = False
+    # Both default to on. A provider's own subagents and MCP servers make the
+    # same run mean different things on different machines, so omni starts from
+    # the quiet end and you opt back in with ``chat.enable_subagents()``.
+    disable_subagents: bool = True
+    disable_mcp: bool = True
     cwd: str = field(default_factory=os.getcwd)
 
     def __post_init__(self):
@@ -94,7 +97,11 @@ class Account:
 
     @property
     def limits(self):
-        """``{"5h": {"used": 0.24, "reset": ts}, "7d": {...}}`` or ``"unauthenticated"``."""
+        """``{"5h": {"used": 0.24, "reset": iso}, "7d": {...}}`` or ``"unauthenticated"``.
+
+        ``used`` is a fraction (``0.24`` is 24%) and ``reset`` is an RFC3339
+        UTC string whatever the provider natively answers in.
+        """
         raise NotImplementedError
 
     def __repr__(self) -> str:

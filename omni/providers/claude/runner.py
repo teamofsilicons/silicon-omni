@@ -23,7 +23,8 @@ from . import control, session
 from .stream import Stream
 
 # Always on: memory files would make the same run mean different things on
-# different machines. Subagents and MCP are opt-out per session, these are not.
+# different machines. Subagents and MCP are off by default but can be opted
+# back into per session; these cannot.
 QUIET_ENV = {
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",

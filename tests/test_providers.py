@@ -157,8 +157,8 @@ def test_codex_windows_are_read_by_duration_never_by_position():
         },
     }
     assert codex_account.windows(payload) == {
-        "7d": {"used": 0.16, "reset": 99},
-        "5h": {"used": 0.04, "reset": 55},
+        "7d": {"used": 0.16, "reset": "1970-01-01T00:01:39.000Z"},
+        "5h": {"used": 0.04, "reset": "1970-01-01T00:00:55.000Z"},
     }
 
 
@@ -220,22 +220,45 @@ def test_agy_reports_remaining_but_omni_reports_used():
                 "name": "usage",
                 "data": {
                     "groups": [
-                        {"buckets": [{"window": "5h", "remaining_fraction": 0.9, "reset_time": "T1"}]},
-                        {"buckets": [{"window": "weekly", "remaining_fraction": 1.0, "reset_time": "T2"}]},
+                        {"buckets": [{"window": "5h", "remaining_fraction": 0.9, "reset_time": 1755600000}]},
+                        {"buckets": [{"window": "weekly", "remaining_fraction": 1.0, "reset_time": 1755686400}]},
                     ]
                 },
             },
         }
     )
     assert agy_windows(stream) == {
-        "5h": {"used": 0.1, "reset": "T1"},
-        "7d": {"used": 0.0, "reset": "T2"},
+        "5h": {"used": 0.1, "reset": "2025-08-19T10:40:00.000Z"},
+        "7d": {"used": 0.0, "reset": "2025-08-20T10:40:00.000Z"},
     }
 
 
 def test_claude_utilisation_is_rescaled_to_a_fraction():
-    assert claude_window({"utilization": 24, "resets_at": "T"}) == {"used": 0.24, "reset": "T"}
+    entry = {"utilization": 24, "resets_at": "2026-08-20T10:00:00+05:30"}
+    assert claude_window(entry) == {"used": 0.24, "reset": "2026-08-20T04:30:00.000Z"}
     assert claude_window(None) == {"used": None, "reset": None}
+
+
+# ------------------------------------------------------- one clock for all
+
+def test_every_provider_says_when_the_same_way():
+    """The spec asks for ISO strings from all three, whatever they answer in."""
+    from omni.shared.clock import iso
+
+    resets = [
+        iso(1755600000),                    # agy: seconds
+        iso(1755600000000),                 # and milliseconds, if it ever changes
+        iso("2025-08-19T10:40:00Z"),        # claude: already a string
+        iso("2025-08-19T16:10:00+05:30"),   # codex: a string with an offset
+    ]
+    assert resets == ["2025-08-19T10:40:00.000Z"] * 4
+
+
+def test_a_time_nobody_can_parse_is_handed_back_rather_than_invented():
+    from omni.shared.clock import iso
+
+    assert iso("some time next week") == "some time next week"
+    assert iso(None) is None and iso("") is None
 
 
 def test_a_working_directory_is_resolved_before_anything_is_named_after_it(tmp_path):

@@ -35,10 +35,11 @@ def test_a_failed_tool_says_so():
     assert "failed" in render(bad)
 
 
-def test_huge_output_is_capped_for_the_seed_only():
+def test_a_huge_result_reaches_the_seed_whole():
+    """The spec is explicit: load the complete context, however long it is."""
     big = Event(type=Event.TOOL.RESULT, tool="Bash", result="x" * 50_000)
-    assert len(render(big)) < 2200
-    assert big.result == "x" * 50_000, "the log keeps everything"
+    assert render(big).count("x") == 50_000
+    assert "…" not in render(big), "nothing may be trimmed on the way into a seed"
 
 
 def test_transcript_merges_a_providers_run_into_one_turn():

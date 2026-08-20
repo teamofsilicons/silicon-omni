@@ -9,7 +9,6 @@ little quota. They are excluded by default::
 Each one picks the cheapest rung the provider has.
 """
 
-import tempfile
 import time
 
 import pytest
@@ -18,6 +17,7 @@ from omni import Inference
 from omni.chat import Chat
 from omni.events import Event
 from omni.session import Store
+from omni.shared import paths
 
 pytestmark = pytest.mark.live
 
@@ -34,8 +34,13 @@ def settle(chat, timeout=400):
 
 
 def talk(session_id, providers, level=CHEAPEST):
+    """A live chat in the real omni home, working in a directory of its own.
+
+    The directory is stable across runs on purpose: claude resumes by working
+    directory, so a fresh temp dir every time would only ever test reseeding.
+    """
     chat = Chat(session_id, providers)
-    chat.cwd(tempfile.mkdtemp(prefix="omni-live-"))
+    chat.cwd(str(paths.ensure(paths.home() / "cwd" / session_id)))
     chat.intelligence(level)
     chat.disable_subagents()
     chat.disable_mcp()
