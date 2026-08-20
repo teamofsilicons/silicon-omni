@@ -1,18 +1,16 @@
 """One 0-10 dial that spans every provider you are logged into.
 
-A level maps to ``{"provider": ..., "model": ..., "effort": ...}``. omni hands
-those two strings to the CLI verbatim and never interprets them, so a new model
-is new data and no new code.
+A level maps to ``{"provider": ..., "model": ..., "effort": ...}``, and omni
+hands those two strings to the CLI verbatim. It does not interpret them, does
+not rank anything, and does not know the name of a single model. Working out
+which models belong on the dial happens at the registry, over a list kept in a
+public repo, so a model released tomorrow needs no release of this package.
 
-The dial arrives finished. It is already reduced to the leftmost models on
-GDPval's score-versus-price graph — level 10 at the top, walking down and to the
-left, so a step down the dial is always cheaper and never a sideways move. omni
-asks ``omni.teamofsilicons.com`` for the dial matching the providers it has,
-keeps the answer under ``~/.omni/cache`` for an hour, and falls back to the
-packaged :file:`ladder.json`. ``OMNI_REGISTRY`` points it somewhere else.
-
-Working out which models belong on the dial is not omni's job — see
-``tools/build_ladder.py``, which is what produces that file.
+The answer is kept under ``~/.omni/cache`` for an hour. Nothing is shipped in
+the wheel as a fallback: a model list baked into a release is a model list that
+goes quietly stale, and a wrong recommendation is worse than an honest refusal.
+A dial that was fetched once is reused even after it expires, so a machine that
+has run before keeps working offline.
 """
 
 import json
@@ -25,17 +23,20 @@ from pathlib import Path
 from ..shared import clock, paths
 
 #: Where the dial comes from unless you say otherwise.
-REMOTE = "https://omni.teamofsilicons.com/api/intelligence"
+REGISTRY = "https://omni.teamofsilicons.com/intelligence.json"
 CACHE_TTL = 60 * 60  # burst the cache after an hour
 QUIET_TTL = 5 * 60  # after a failed fetch, sit still rather than retry every call
-VERSION = 1  # bump when a rung's shape changes; older caches are then ignored
+VERSION = 2  # bump when a rung's shape changes; older caches are then ignored
 LEVELS = 11  # 0..10
-LADDER_FILE = Path(__file__).with_name("ladder.json")
+
+
+class NoDial(LookupError):
+    """The registry has never been reached, so there is nothing to route to."""
 
 
 def remote() -> str:
     """The registry to ask. Read per call, so ``OMNI_REGISTRY`` can be set late."""
-    return os.environ.get("OMNI_REGISTRY") or REMOTE
+    return os.environ.get("OMNI_REGISTRY") or REGISTRY
 
 
 def key(providers) -> str:
@@ -43,21 +44,37 @@ def key(providers) -> str:
     return "+".join(sorted(providers))
 
 
-def packaged(name: str) -> dict:
-    doc = json.loads(LADDER_FILE.read_text(encoding="utf-8"))
-    return doc.get("ladders", {}).get(name) or {}
+def is_dial(value) -> bool:
+    """A dial is levels to rungs. Anything else is an envelope we are inside."""
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and all(str(level).isdigit() for level in value)
+        and all(isinstance(rung, dict) and "model" in rung for rung in value.values())
+    )
 
 
 def unwrap(payload, name: str):
-    """Take the dial out of whatever upstream wrapped it in."""
+    """Take the dial out of whatever the registry wrapped it in.
+
+    Checked rather than assumed: an envelope that happens not to contain our
+    key must not be mistaken for a dial and cached as one.
+    """
     if not isinstance(payload, dict):
         return None
-    inside = payload.get("ladders", {}).get(name) or payload.get("ladder") or payload
-    return inside if isinstance(inside, dict) and inside else None
+    wrapped = payload.get("ladders")
+    for candidate in (
+        wrapped.get(name) if isinstance(wrapped, dict) else None,
+        payload.get("ladder"),
+        payload,
+    ):
+        if is_dial(candidate):
+            return candidate
+    return None
 
 
 def fetch(name: str, timeout: float = 5.0):
-    """Ask upstream for the dial for exactly these providers."""
+    """Ask the registry for the dial for exactly these providers."""
     url = f"{remote()}?{urllib.parse.urlencode({'providers': name})}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -78,44 +95,40 @@ def cached() -> dict:
     return blob if blob.get("version") == VERSION else {}
 
 
-def read_cache(name: str, fresh_only: bool = True, source: str = ""):
+def read_cache(name: str, fresh_only: bool = True):
     entry = cached().get(name)
     if not entry:
-        return None
-    if source and entry.get("source") != source:
         return None
     if fresh_only and clock.epoch() - entry.get("at", 0) > entry.get("ttl", CACHE_TTL):
         return None
     return entry.get("levels")
 
 
-def write_cache(providers, levels: dict, ttl: float = CACHE_TTL, source: str = "remote") -> None:
+def write_cache(providers, levels: dict, ttl: float = CACHE_TTL) -> None:
     paths.ensure(paths.cache())
     blob = cached() or {"version": VERSION}
-    blob[key(providers) if not isinstance(providers, str) else providers] = {
-        "at": clock.epoch(),
-        "ttl": ttl,
-        "source": source,
-        "levels": levels,
-    }
+    name = providers if isinstance(providers, str) else key(providers)
+    blob[name] = {"at": clock.epoch(), "ttl": ttl, "levels": levels}
     cache_file().write_text(json.dumps(blob))
 
 
 def levels(providers) -> dict:
-    """The dial for these providers: remote if reachable, packaged otherwise."""
+    """The dial for these providers, from the registry or from what it said last."""
     name = key(providers)
     fresh = read_cache(name)
     if fresh is not None:
         return fresh
     found = fetch(name)
-    if found is None:
-        # A dial we once fetched beats the one we shipped. Either way, stop
-        # asking for a few minutes rather than stalling on every call.
-        found = read_cache(name, fresh_only=False, source="remote") or packaged(name)
-        write_cache(name, found, QUIET_TTL, "packaged")
-    else:
-        write_cache(name, found, CACHE_TTL, "remote")
-    return found
+    if found is not None:
+        write_cache(name, found)
+        return found
+    # Unreachable. An old answer beats no answer, but stop asking for a while
+    # rather than stalling on every call.
+    stale = read_cache(name, fresh_only=False)
+    if stale is None:
+        return {}
+    write_cache(name, stale, QUIET_TTL)
+    return stale
 
 
 def table(providers) -> dict[int, dict]:
@@ -127,5 +140,7 @@ def resolve(level: int, providers) -> dict:
     """The single rung for ``level``. Out-of-range levels clamp rather than raise."""
     rungs = table(providers)
     if not rungs:
-        raise LookupError(f"no dial available for providers {sorted(providers)}")
+        raise NoDial(
+            f"no dial for {sorted(providers)}: could not reach {remote()} and nothing is cached"
+        )
     return rungs[min(max(int(level), 0), LEVELS - 1)]

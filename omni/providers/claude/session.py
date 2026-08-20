@@ -79,7 +79,7 @@ def seed(cwd: str, session_id: str, turns: list[dict], model: str) -> Path:
                     "id": f"msg_{uuid.uuid4().hex[:16]}",
                     "type": "message",
                     "role": "assistant",
-                    "model": model or "claude-sonnet-5",
+                    "model": model,  # whatever the dial said; omni names no model itself
                     "content": [{"type": "text", "text": turn["text"]}],
                     "stop_reason": None,
                     "stop_sequence": None,

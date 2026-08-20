@@ -66,7 +66,8 @@ chat.intelligence(0)    # cheapest thing worth using
 chat.intelligence(10)   # best thing you have
 ```
 
-Behind it is a graph. Every model our three CLIs can run is plotted by its
+Behind it is a graph, and omni is not the one drawing it. Every model the three
+CLIs can run is plotted by its
 [GDPval-AA v2](https://artificialanalysis.ai/evaluations/gdpval-aa) Elo — Artificial
 Analysis' blind pairwise scoring of real economically valuable work, anchored so that a
 human expert is 1000 — against the dollars they measured it cost to earn that score.
@@ -90,38 +91,26 @@ lvl    Elo   $/task   model
   0  1155.6  0.0072   gpt-5.6-luna low
 ```
 
-Elo is anchored so a human expert scores 1000, over 220 real work tasks in an agentic
-harness; the dollars are what Artificial Analysis measured those runs cost. Level 4 is
-worth staring at: GPT-5.6 Luna at max effort scores within 15% of the top of the board
-for **66× less money**, which is why everything between it and Opus 5 falls off the edge.
+Level 4 is worth staring at: GPT-5.6 Luna at max effort scores within 15% of the top of
+the board for **66× less money**, which is why everything between it and Opus 5 falls
+off the edge.
 
-There is **one dial per set of providers**, because losing a provider puts models back on
-the dial that another vendor's were shadowing. With fewer providers the edge is shorter
-and levels start sharing a rung — that is the dial telling you there is nothing in
-between worth picking.
+There is one dial per set of providers, because losing a vendor puts models back on the
+dial that another vendor's were shadowing. With fewer providers the edge is shorter and
+levels start sharing a rung — that is the dial telling you there is nothing in between
+worth picking.
 
-omni does none of that arithmetic. It asks `omni.teamofsilicons.com` for the dial
-matching the providers it has, and keeps the answer in `~/.omni/cache` for an hour.
-Point it at your own with `OMNI_REGISTRY`. The registry lives in [`docs/`](docs/) and
-deploys to Vercel; what it serves comes from
-[`docs/data/models.json`](docs/data/models.json), so changing the dial is a commit,
-not a release.
+**omni does none of this arithmetic, and knows the name of no model.** It asks
+`omni.teamofsilicons.com/intelligence.json` for the finished map matching the providers
+it has, and keeps it in `~/.omni/cache` for an hour. `model` and `effort` go to the CLI
+verbatim, so a model released tomorrow needs no release of this package — only a commit
+to [`models-gdpval.json`](https://github.com/teamofsilicons/omnipotent) in the registry
+repo. Point somewhere else with `OMNI_REGISTRY`.
 
-That host does not exist yet, so today every dial comes from the packaged
-[`omni/intelligence/ladder.json`](omni/intelligence/ladder.json) — a plain map from level
-to model, one per provider set. It is a bootstrap, not a fallback: check its `captured`
-date, because a dial that has gone stale will quietly keep recommending last month's best
-buy. Once a real dial has been fetched, omni prefers it over the packaged one even after
-it expires. `model` and `effort` go to the CLI verbatim, so a new model release is new
-data and no new code.
-
-Choosing which models belong on the dial is
-[`tools/build_ladder.py`](tools/build_ladder.py)'s job, not omni's. Run it to rebuild the
-packaged file when the leaderboard moves. Its `caveats` list says exactly which models
-were left off and why: anything GDPval has not scored *or* costed is left off rather than
-guessed at.
-
----
+Nothing ships in the wheel as a fallback. A model list baked into a release is a model
+list that goes quietly stale, and a wrong recommendation is worse than an honest refusal
+— so a machine that has never reached the registry raises `NoDial` rather than guessing.
+One that has run before keeps working from its cache, expired or not.
 
 ## Events
 
@@ -393,10 +382,11 @@ omni/
   intelligence/    the 0-10 dial and its ladder
   providers/       claude/ · openai/ · google/, plus the contract they share
   shared/          paths, jsonl, clock, callback bus, subprocess plumbing
-tools/
-  build_ladder.py  turns GDPval-AA v2 into the packaged dial
-docs/              the site and the registry omni reads its dial from
 ```
+
+The dial, the landing page and the reference live in
+[teamofsilicons/omnipotent](https://github.com/teamofsilicons/omnipotent). Which models
+exist is that repo's problem; running them is this one's.
 
 Adding a provider means an `Account` and a `Runner` — see
 [`omni/providers/base.py`](omni/providers/base.py), then `providers.register(...)`.

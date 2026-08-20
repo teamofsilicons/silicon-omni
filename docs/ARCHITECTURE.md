@@ -132,19 +132,26 @@ every turn, so a kill lands mid-write eventually.
 re-create — two contenders would both succeed. It writes its claim over the old one and
 reads it back; only the process that sees its own pid holds it.
 
-## The dial is data, not a calculation
+## The dial is somebody else's problem
 
-`intelligence/registry.py` does not know what a Pareto frontier is. It looks up a
-finished map from level to model, keyed by the set of providers you have, and that is
-all. The map is fetched from upstream, cached under `~/.omni/cache` for an hour, and
-falls back to the packaged `ladder.json`.
+`intelligence/registry.py` does not know what a Pareto frontier is, and the package does
+not contain the name of a single model. It asks
+`omni.teamofsilicons.com/intelligence.json` for a finished map from level to model, keyed
+by the set of providers you have, and caches it for an hour.
 
-That split is deliberate. Deciding which models belong on the dial needs a benchmark
+That split is the point. Deciding which models belong on the dial needs a benchmark
 leaderboard, per-model measured costs, and a hand-checked mapping from CLI slugs to
-leaderboard rows — none of which should be in a client, and all of which will move to
-the remote registry. `tools/build_ladder.py` does it offline and ships the answer.
+leaderboard rows. None of that belongs in a client, and all of it changes on a schedule
+that has nothing to do with this package's releases. It lives in the
+[omnipotent](https://github.com/teamofsilicons/omnipotent) repo, where a new model is a
+commit to a JSON file.
 
-The one thing worth understanding about that answer: it is the *left edge* of a
+There is deliberately no fallback compiled in. A model list shipped in a wheel is a model
+list that goes stale, and silently recommending last quarter's best buy is worse than
+refusing: with nothing cached and no registry reachable, `resolve` raises `NoDial`. A
+machine that has run before keeps working from its cache, expired or not.
+
+The one thing worth understanding about the answer: it is the *left edge* of a
 score-versus-price graph, so every step down the dial is genuinely cheaper. Levels can
 share a rung when the edge is shorter than eleven points, which is honest — it means
 there is nothing in between that anybody should pick.
