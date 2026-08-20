@@ -14,6 +14,7 @@ PROVIDERS = Inference.get_available_providers() # list["claude", "google", "open
 chat = Inference.load_or_create_session("session_id")
 chat.active_inference_providers(PROVIDERS)
 chat.inteligence(7) # 0-10 fetched from omni.teamofsilicons.com for the given set of providers. combines model and effort.
+# replaces the session prompt given by the provider. to append, use .append_system_prompt, or .append_system_prompt_file
 chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either one
 
 chat.disable_subagents()
@@ -26,8 +27,8 @@ def fetch_new_messages():
 
 @chat.on_event
 def handle_event(event):
-    event_type == Event.THINKING # THINKING, TOOL.CALL, TOOL.RESULT, END, INJECTED, TEXT, AUTH_ERROR, LIMIT_REACHED
-    last_event = event_type
+    event.type == Event.THINKING # START, THINKING, TOOL.CALL, TOOL.RESULT, END, INJECTED, TEXT, ERROR (auth, limit error, unavailable, etc etc), SWITCH_PROVIDER, NEW_SESSION.
+    last_event = event.type
     pass # do whatever you want for events
 
 def check_stop_flag():
@@ -41,8 +42,8 @@ chat.start()
 chat.send(...)
 
 # if they want to do it syncronously with while. or use async or pub/sub. implementation upto the user. chat.send is all that omni aspects.
-while chat.running:
-    # chat.running.status could be 'busy' or 'waiting'. busy is something is being running actively. and waiting is running & waiting for new msgs.
+while chat.status in ["busy", "waiting"]:
+    # chat.status could be 'busy' or 'waiting'. busy is something is being running actively. and waiting is running & waiting for new msgs.
     new_msg = fetch_new_messages()
     if new_msg:
         chat.send(new_msg)
@@ -76,14 +77,14 @@ the .send method should be able to send a msg to a new chat or inject in in betw
 
 
 features needed:
-1. persistent sessions loadable via a session id. (sessions are cross provider and written on disk at ~/.omni/sessions/ as {session_id}.txt)
+1. persistent sessions loadable via a session id. (sessions are cross provider and written on disk at ~/.omni/sessions/ as {session_id}.jsonl)
 2. event hook on decorators @chat.on_event
 3. omni is a translation layer so we can handle cross provider switching any time.
 
 Disable all subagents and workflows using `chat.disable_subagents()`:
 `CLAUDE_CODE_DISABLE_WORKFLOWS=1 claude "use subagents and find out about the files in this dir" --disallowedTools "Agent(*)"`
-`codex "use subagents and find out about the files in this dir" -c "agents.enabled=false"`
-```agy cli doesn't support turning off subagents.```
+`codex app-server --stdio --disable apps --disable plugins -c agents.enabled=false -c project_doc_max_bytes=0`
+`agy cli doesn't support turning off subagents.`
 ^ these commands when run don't use subagents. good. we do this so that any workers defined explicitely is used instead of their subagents.
 
 we do a similar thing, by allowing to disable all connected mcp servers & external connectors.
@@ -97,12 +98,12 @@ for this, first its imp to understand how each provider streams and stores data 
 
 eg: say a chat starts off with gemini 3.7 on high flash on antigravity. then mid-way, its decided to increase the intelligence and it now uses claude opus 5 on medium. the chat should continue exactly. this will require us to translate the agy session into a claude code session. while it is true that it is often lossy, we will try to patch it as much as possible. a tool call that can not be translated exactly, can be passed as text. in a way that when (if) translating back to gemini, that should be exactly the same. so, i'll not say lossy, but rather that its preserved. maybe something like [GoogleSearch: "..."] will only be in gemini.
 
-store all session details inside ~/.omni/sessions/ which is incapsulating all common as well as unique tools that a provider can call. this is the source of truth.
+store all session details inside ~/.omni/sessions/ as {session_id}.jsonl which is incapsulating all common as well as unique tools that a provider can call. this is the source of truth.
 we will only load the sections that can be loaded into a provider. eg, GoogleSearch can be loaded as text. but reasoning can't be because its encrypted.
 
 
 Auth
-There should be a auth status for all cli's installed. And a way to login into it without doing so via the cli itself. they usually give a link to open, then a link they ask for, or a callback. It should be automated.
+There should be a auth status for all cli's installed. And a way to login into it without doing so via the cli itself. they usually give a link to open, then a link they ask for, or a callback. It should be automated. If it can't be done for some reason, surface the problem to the user. or ask them to login directly themselves. No multi-account support yet.
 
 ```python
 from omni import Inference
@@ -125,6 +126,7 @@ Inference.claude.limits
 # or it could return "unauthenticated"
 ```
 0.24 -> 24%
+the 5h and 7d session is the standard way that claude, codex and antigravity show session limits and time remaining. this is a standard practice among them all.
 
 
 Logging
@@ -139,6 +141,8 @@ def log():
 sends everything over. start, end, errors, even events (they are sent to both .on_event and .logs), every model change, every new sesison, msg in, tool calls, everything.
 these logs should be programmically parsable.
 
+Store things inside a .jsonl file and keep it the json. this is the source of truth when switching providers.
+
 
 Providers & Intelligence
 providers does 2 things. check if the cli is installed, and then checks which ones are active (authenticated).
@@ -149,14 +153,101 @@ the string you give for model and effort should not be maintained as a local dic
 
 intelligence scale will only include models from providers that you have access to.
 
+make sure to map a omni session to a session on claude, codex and/or antigravity. when switching, a new session will be seeded with history from omni, but when continuing, the existing session should be used.
+
+eg: omni session A on claude session B. now switch to google, with session C, chat a little and come back to claude, but now it will first seed the session B to come to the same place as session C. more chatting will continue on session B. All the history is being written to omni session A, and then getting seeded to providers.
+
+Do not store reasoning tokens/encrypted tokens inside omni. just enter a reasoning block that is empty for logging purpose. it will not be used to seed another chat. besides reasoning, log everything else.
+
+
+
+
+
+
+
+GENERAl:
+NOTHING CHANGES MID TURN. ALL CHANGES HAPPEN AFTER THE CURRENT TOOL IS DONE (turn completed).
+all chat will be --dangerously-skip-permissions or equivalent.
+Preserve, never lose.
+Omni owns the history but is read from only on switch. Use the native continue/resume when using not switching providers. model-switch is easily possible even when using a provider.
+Omni only observes the tools. Dont sit and define new ones to the providers to use.
+
+running any of the following commands anytime again will overwrite them. this is how intelligence is changed. this is how a new session is created. this is how inference providers are changed. these things can happen after the current running tool/task/turn is completed.
+```python
+chat = Inference.load_or_create_session("session_id")
+chat.active_inference_providers(PROVIDERS)
+chat.inteligence(7) # 0-10 fetched from omni.teamofsilicons.com for the given set of providers. combines model and effort.
+chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either one
+```
+
+2 chat sessions can not have the same session id. a new one cannot be opened before the currently running one is closed. if nothing is attached to a session id, it should be automatically closed. this should not be possible for a chat to open a session id, and then die.
+
+
+
+CODEX:
+we use app server. not exec.
+
+use a fake home folder, then turn off skills over the protocol.
+
+CODEX_HOME=~/.omni/jails/<session>/codex \
+codex app-server --stdio --disable apps --disable plugins \
+  -c agents.enabled=false -c project_doc_max_bytes=0
+Put only two things in that folder: a symlink to the real auth.json, and a small config.toml you wrote. Then after connecting, call skills/list and skills/config/write {name, enabled:false} for each skill.
+
+Why it works: codex reads all its settings from one folder, and lets you choose the folder. Point it at an empty one and it has nothing to load — no MCP servers, no hooks, no AGENTS.md. Login still works because you symlinked the one file that holds it. Skills are the exception: they live in a different shared folder outside that one, so the folder trick misses them and you have to switch them off one by one. That's a normal request, it doesn't error, and it saves into your folder so you only do it once.
+
+codex app-server supports seeding of conversation when switching to codex from any other provider.
+
+
+
+Antigravity:
+increase the timeout to more than 5mins. it should never timeout.
+
+agy -p --output-format stream-json --input-format stream-json \
+  --disable-slash-commands --print-timeout 24h --dangerously-skip-permissions
+
+agy has no settings for disabling this. It has no flag for MCP, no flag for subagents, and no way to remove a tool. The fake-home trick that works for codex fails here, because agy's login is tied to the real home folder. Its ok. let antigravity load whatever it wants.
+
+there is no native way to seed, so we flatten a msg into one user msg and then continue. make sure this one msg is enough to seed back natively into other providers. this will cost one turn, but will seed the model with what it needs.
+
+
+
+Claude:
+use flags. Nothing else needed.
+
+CLAUDE_CODE_DISABLE_WORKFLOWS=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
+CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_ORG_MEMORY=1 \
+claude -p --output-format stream-json --input-format stream-json --verbose \
+  --strict-mcp-config --setting-sources "" --disable-slash-commands \
+  --disallowedTools "Agent(*)" --dangerously-skip-permissions
+
+stops all subagents as well as mcps.
+
+to seed claude with existing conversation, write to the claude's session file.
 
 
 
 
 # codebase
-structure it in modules. each part here becomes a module. nesting module is possible into submodules.
-dont write code that starts with _func
+structure it in modules. each part here becomes a module. nesting module is possible into submodules. define modules based on how i've seperated ideas here.
+dont write code that starts with _func. abstract only when it will be used atleast thrice.
+create a shared dir for shared code.
 keep the code to a minimum. if it can be done in less, lets do it in less.
-we are following a webhook style of code.
+we are following a event/callback driven code style.
 this project will be open sourced, so make sure it can receive contributors. write good documentation and structure the code for understandability.
-this will be published as a python package.
+omni will be published as a python package.
+follow a sync approach when its for simple tasks, event/callback driven > async for complex. async otherwise.
+write test cases, mention what you're testing a test-group, and then at the end, give results.
+all tools you need are installed natively and feel free to install any package.
+
+
+# codebase thinking
+- writing code is not just about implementation, maintainability & elegance matter as much.
+- test and try things before you implement. try a simpler version to see how it works, what works what doesn't work. think in extremes.
+- smaller code is reliable code. write less.
+- writing once is not enough. its v0.0, iterate. make it smaller, faster, reliable, resilient, elegant, & largely maintainable.
+- use pre installed libraries before you need to reach out for external onces. feel free to use them when you want.
+- codebase is a form of art.
+- use workflows well... not just for writing code, but thinking, evaluating, testing, researching, organizing, and critiquing yourself.
+- run agents to get critiques on what you have done. what you have thought.
+- don't implement more than this UNDERSTANDING.md asks you until its truely needed.
