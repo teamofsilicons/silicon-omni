@@ -112,12 +112,6 @@ class AppServer:
         except AppServerError:
             return None
 
-    def notify(self, method: str, params=None) -> None:
-        body = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            body["params"] = params
-        self.write(body)
-
     def stop(self) -> None:
         if self.proc:
             self.proc.stop(timeout=8)

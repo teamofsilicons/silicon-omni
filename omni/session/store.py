@@ -15,13 +15,6 @@ class Store:
         self.path = paths.session_file(session_id)
         self.seq = max((e.get("seq", -1) for e in jsonl.stream(self.path)), default=-1)
 
-    def __len__(self) -> int:
-        return self.seq + 1
-
-    @property
-    def exists(self) -> bool:
-        return self.path.exists()
-
     def append(self, event: Event) -> Event:
         """Stamp the event with its position in the session and persist it."""
         self.seq += 1

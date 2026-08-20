@@ -84,12 +84,17 @@ def test_a_machine_that_has_run_before_keeps_working_offline():
     assert registry.table(["a"])[10]["model"] == "a-top"
 
 
-def test_an_unreachable_registry_is_not_retried_on_every_call():
+def test_an_unreachable_registry_is_not_retried_on_every_call(monkeypatch):
+    tries = []
+    monkeypatch.setattr(registry, "fetch", lambda name, timeout=5.0: tries.append(name) or None)
     registry.write_cache(["a"], dial(CHEAP))
     blob = json.loads(registry.cache_file().read_text())
     blob["a"]["at"] -= registry.CACHE_TTL + 1
     registry.cache_file().write_text(json.dumps(blob))
-    registry.table(["a"])
+
+    for _ in range(5):
+        registry.table(["a"])
+    assert tries == ["a"], "one failed try should buy quiet, not five"
     assert json.loads(registry.cache_file().read_text())["a"]["ttl"] == registry.QUIET_TTL
 
 

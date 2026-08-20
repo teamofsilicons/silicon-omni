@@ -21,7 +21,7 @@ from omni.session import Store
 
 pytestmark = pytest.mark.live
 
-CHEAPEST = {"claude": 0, "openai": 0, "google": 0}
+CHEAPEST = 0  # the bottom of every dial, whoever you are signed into
 
 
 def settle(chat, timeout=400):
@@ -33,7 +33,7 @@ def settle(chat, timeout=400):
     return False
 
 
-def talk(session_id, providers, level=0):
+def talk(session_id, providers, level=CHEAPEST):
     chat = Chat(session_id, providers)
     chat.cwd(tempfile.mkdtemp(prefix="omni-live-"))
     chat.intelligence(level)
@@ -54,7 +54,7 @@ def provider(request):
 
 
 def test_a_provider_answers_runs_a_tool_and_remembers(provider):
-    chat = talk(f"live-{provider}", [provider], CHEAPEST[provider])
+    chat = talk(f"live-{provider}", [provider])
     try:
         chat.start()
         chat.send("reply with exactly: OK")
@@ -74,7 +74,7 @@ def test_a_provider_answers_runs_a_tool_and_remembers(provider):
 
 
 def test_auth_and_limits_answer_without_a_turn(provider):
-    account = getattr(Inference, {"claude": "claude", "openai": "openai", "google": "google"}[provider])
+    account = getattr(Inference, provider)
     assert account.auth_status == "authenticated"
     limits = account.limits
     assert set(limits) == {"5h", "7d"}

@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from omni import providers
 from omni.chat import Chat
 from omni.events import Event
 
@@ -246,18 +247,27 @@ def test_stopping_from_inside_a_handler_does_not_hang(chat):
     assert chat.status == "stopped"
 
 
-def test_many_switches_do_not_pile_up_threads(chat):
-    import threading
+def test_every_replaced_runner_is_stopped(chat):
+    """A dropped reference is not a stopped process — that leaks a live CLI."""
+    seen = []
+    for name in ("alpha", "beta"):
+        runner_cls = providers.classes(name)[1]
+        began = runner_cls.start
+
+        def remember(self, native_id="", history=None, began=began):
+            began(self, native_id, history)
+            seen.append(self)
+
+        runner_cls.start = remember
 
     chat.start()
-    chat.send("warm up")
-    assert settle(chat)
-    before = threading.active_count()
     for level in (10, 0) * 6:
         chat.intelligence(level)
         chat.send(f"turn {level}")
         assert settle(chat)
-    assert threading.active_count() <= before + 2, "runners are not being cleaned up"
+    assert len(seen) > 6, "the dial should have rebuilt several times"
+    assert all(not r.alive for r in seen[:-1]), "a replaced runner was dropped but never stopped"
+    assert seen[-1] is chat.runner
 
 
 def test_a_provider_is_not_marked_caught_up_until_it_has_the_history(chat, two_providers):

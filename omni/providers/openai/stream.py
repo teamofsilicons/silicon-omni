@@ -17,7 +17,6 @@ NOISE = ("id", "type", "status", "aggregatedOutput", "exitCode", "durationMs", "
 class Stream:
     def __init__(self, model: str = ""):
         self.model = model
-        self.rate_limits: dict | None = None
         self.tokens: dict | None = None
 
     def event(self, type_: str, **fields) -> Event:
@@ -32,9 +31,6 @@ class Stream:
             return self.finished(params.get("turn") or {})
         if method == "error":
             return self.failed(params)
-        if method == "account/rateLimits/updated":
-            self.rate_limits = params.get("rateLimits")
-            return []
         if method == "thread/tokenUsage/updated":
             self.tokens = params
             return []

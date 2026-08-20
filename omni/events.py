@@ -47,8 +47,9 @@ class Event:
     ``END``             ``extra`` — stop reason, usage, if the provider says
     ``INJECTED``        ``text`` — a message that landed mid-turn
     ``ERROR``           ``error``, ``kind`` — one of ``auth`` / ``limit`` /
-                        ``unavailable`` / ``crash``, or ``omni`` when the engine
-                        itself failed, or ``handler`` when your callback raised
+                        ``unavailable`` / ``crash`` from the model or its CLI,
+                        ``stderr`` for CLI chatter, ``omni`` when the engine
+                        itself failed, ``handler`` when your callback raised
     ``SWITCH_PROVIDER`` ``provider`` (the new one), ``extra['from']``
     ``NEW_SESSION``     ``session``, ``extra['native']``
     ``CONFIG``          ``text`` — what changed, ``extra`` — the new value

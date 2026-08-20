@@ -82,3 +82,27 @@ def test_a_lock_is_only_released_by_its_owner():
     paths.lock_file("s").write_text(json.dumps({"pid": os.getpid() + 1, "at": "then"}))
     held.release()
     assert paths.lock_file("s").exists(), "someone else's lock must survive"
+
+
+def test_a_session_remembers_where_it_runs_and_how_clever_it_is():
+    """Both are pinned to the session: claude resumes by cwd, and a reload
+    that forgot the level would quietly answer at a different price."""
+    from omni.chat import Chat
+    from omni.intelligence import registry
+
+    from .fake import dial, make, rung
+    from omni import providers
+
+    providers.register("solo", *make("solo"))
+    registry.write_cache(["solo"], dial(rung("solo", "big", "high", 1500, 5.0),
+                                        rung("solo", "small", "low", 900, 1.0)))
+    first = Chat("remembered", ["solo"])
+    first.intelligence(0)
+    first.cwd("/tmp")  # resolved through symlinks on the way in
+    first.stop()
+
+    again = Chat("remembered", ["solo"])
+    assert again.level == 0
+    assert again.config.cwd == os.path.realpath("/tmp")
+    assert again.rung()["model"] == "small"
+    again.stop()

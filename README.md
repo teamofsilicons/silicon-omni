@@ -131,7 +131,7 @@ def handle(event):
 | `Event.TOOL.RESULT` | `tool`, `id`, `result`, `ok` |
 | `Event.END` | the turn is over |
 | `Event.INJECTED` | `text` — a message that landed mid-turn |
-| `Event.ERROR` | `error`, `kind` — `auth` / `limit` / `unavailable` / `crash`, plus `omni` (the engine itself) and `handler` (your callback raised) |
+| `Event.ERROR` | `error`, `kind` — `auth` / `limit` / `unavailable` / `crash` from the model or its CLI, plus `stderr` (CLI chatter), `omni` (the engine itself) and `handler` (your callback raised) |
 | `Event.SWITCH_PROVIDER` | `provider`, `extra['from']` |
 | `Event.NEW_SESSION` | `extra['native']` — the provider's own session id |
 | `Event.CONFIG` | `text` — a setting changed |
