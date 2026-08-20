@@ -367,6 +367,14 @@ export default function Reference() {
           over the copy packaged with the release, and backs off for five minutes rather than
           retrying on every call.
         </p>
+        <h3>Changing what it serves</h3>
+        <p>
+          There is no database behind this. The models live in{" "}
+          <code className="inline">docs/data/models.json</code> in a public repo, and the site
+          reads that file over raw.githubusercontent at request time. Edit it, commit, and every
+          install picks the change up within the hour — no release, no redeploy, and git keeps the
+          history a database would have thrown away.
+        </p>
         <div className="row">
           <a className="btn-dark" href="/dial">
             edit the dial

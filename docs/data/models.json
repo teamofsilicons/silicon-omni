@@ -1,4 +1,5 @@
 {
+  "note": "The models omni's dial is built from. This file is the source of truth: edit it, commit, and every install picks the change up within the hour — no release needed. One entry per model AND effort, because effort changes both what a model scores and what it costs. 'model' and 'effort' are passed to the CLI verbatim; an empty effort means the flag is not passed at all. 'score' is a GDPval-AA v2 Elo and 'price' is USD per GDPval task from the same leaderboard. Leave either out and the model is kept here but stays off the dial, which is the right thing to do for a model nobody has benchmarked yet. Only the left edge of the score-versus-price graph becomes a dial: a model earns a level when nothing else is both better and cheaper.",
   "source": {
     "benchmark": "GDPval-AA v2, Artificial Analysis",
     "url": "https://artificialanalysis.ai/evaluations/gdpval-aa",
@@ -16,7 +17,7 @@
     "Gemini prices are promotional through 2026-12-31 and double on 2027-01-01, which will move those points right. AA also measured Gemini through Google's own API, not through agy.",
     "AA bills OpenAI cache writes at 1.25x input, which OpenAI's own rate card does not charge, so GPT-5.6 costs run about 3% high. It is applied consistently, so the ordering is unaffected."
   ],
-  "entries": [
+  "models": [
     {
       "provider": "claude",
       "model": "claude-opus-5",

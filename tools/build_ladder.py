@@ -28,7 +28,7 @@ LEADERBOARD = "https://artificialanalysis.ai/evaluations/gdpval-aa"
 ANY_MODEL = "https://artificialanalysis.ai/models/claude-sonnet-5"  # any model page carries all 204
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "omni" / "intelligence" / "ladder.json"
-SEED = ROOT / "docs" / "data" / "seed.json"  # the same graph, for the site's database
+GRAPH = ROOT / "docs" / "data" / "models.json"  # the same graph, for the site to serve
 LEVELS = 11
 PROVIDERS = ("claude", "openai", "google")
 
@@ -233,18 +233,21 @@ if __name__ == "__main__":
     doc = build(plotted)
     OUT.write_text(json.dumps(doc, indent=2) + "\n")
     print(f"wrote {OUT}")
-    # The site keeps the whole graph, not just the dials, so it can recompute
-    # the edge itself as models are added and removed.
-    SEED.parent.mkdir(parents=True, exist_ok=True)
-    SEED.write_text(
+    # The site serves the whole graph, not the dials, so it can recompute the
+    # edge itself as models are added and removed by hand.
+    existing = json.loads(GRAPH.read_text()) if GRAPH.exists() else {}
+    GRAPH.parent.mkdir(parents=True, exist_ok=True)
+    GRAPH.write_text(
         json.dumps(
             {
+                "note": existing.get("note", ""),
                 "source": doc["source"],
                 "caveats": doc["caveats"],
-                "entries": [dict(p, note=f"GDPval-AA v2, {doc['source']['captured']}") for p in plotted],
+                "models": [dict(p, note=f"GDPval-AA v2, {doc['source']['captured']}") for p in plotted],
             },
             indent=2,
+            ensure_ascii=False,
         )
         + "\n"
     )
-    print(f"wrote {SEED} ({len(plotted)} entries)")
+    print(f"wrote {GRAPH} ({len(plotted)} models)")

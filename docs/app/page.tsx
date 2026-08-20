@@ -1,8 +1,7 @@
 import { Copy } from "./copy"
 import { Footer } from "./footer"
-import seed from "../data/seed.json"
 import { dialFor } from "../lib/dial"
-import type { Entry } from "../lib/dial"
+import { graph } from "../lib/graph"
 
 const INSTALL = "pip install silicon-omni"
 
@@ -19,8 +18,9 @@ const EVENTS: [string, string][] = [
   ["NEW_SESSION", "a provider opened one of its own"],
 ]
 
-export default function Home() {
-  const rungs = dialFor(seed.entries as Entry[], ["claude", "openai", "google"])
+export default async function Home() {
+  const { models } = await graph()
+  const rungs = dialFor(models, ["claude", "openai", "google"])
 
   return (
     <>

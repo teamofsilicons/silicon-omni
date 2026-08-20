@@ -10,9 +10,8 @@
 
 import { NextRequest, NextResponse } from "next/server"
 
-import seed from "../../../data/seed.json"
 import { allDials, dialFor } from "../../../lib/dial"
-import { configured, entries } from "../../../lib/db"
+import { graph, SOURCE, VIEW } from "../../../lib/graph"
 import { combinations, key } from "../../../lib/providers"
 
 export const dynamic = "force-dynamic"
@@ -20,18 +19,17 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const asked = request.nextUrl.searchParams.get("providers") ?? ""
   const providers = asked.split(/[+,\s]+/).filter(Boolean)
-  const rows = await entries()
-  const combos = combinations()
+  const { models, source, caveats, fresh } = await graph()
 
   return NextResponse.json(
     {
       providers: providers.length ? key(providers) : null,
-      ladder: providers.length ? dialFor(rows, providers) : null,
-      ladders: allDials(rows, combos),
-      source: seed.source,
-      caveats: seed.caveats,
-      live: configured,
-      counted: rows.length,
+      ladder: providers.length ? dialFor(models, providers) : null,
+      ladders: allDials(models, combinations()),
+      source: { ...source, models: SOURCE, edit: VIEW },
+      caveats,
+      counted: models.length,
+      fresh,
     },
     { headers: { "cache-control": "public, s-maxage=60, stale-while-revalidate=3600" } },
   )

@@ -102,8 +102,10 @@ between worth picking.
 
 omni does none of that arithmetic. It asks `omni.teamofsilicons.com` for the dial
 matching the providers it has, and keeps the answer in `~/.omni/cache` for an hour.
-Point it at your own with `OMNI_REGISTRY`; the registry itself lives in
-[`docs/`](docs/) and deploys to Vercel.
+Point it at your own with `OMNI_REGISTRY`. The registry lives in [`docs/`](docs/) and
+deploys to Vercel; what it serves comes from
+[`docs/data/models.json`](docs/data/models.json), so changing the dial is a commit,
+not a release.
 
 That host does not exist yet, so today every dial comes from the packaged
 [`omni/intelligence/ladder.json`](omni/intelligence/ladder.json) — a plain map from level
