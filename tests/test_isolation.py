@@ -1,7 +1,8 @@
 """Test group: isolation — the exact flags that keep providers from bringing their own help.
 
-The spec makes these invocations the contract, so they are asserted directly
-rather than inferred from behaviour::
+Subagents and MCP are off unless a chat opts back in, so these are the flags a
+default run carries. The spec makes the invocations themselves the contract, so
+they are asserted directly rather than inferred from behaviour::
 
     CLAUDE_CODE_DISABLE_WORKFLOWS=1 claude ... --disallowedTools "Agent(*)"
     codex app-server --stdio --disable apps --disable plugins -c agents.enabled=false -c project_doc_max_bytes=0
@@ -38,21 +39,21 @@ def test_claude_always_streams_both_ways_and_skips_permissions():
 
 
 def test_claude_subagents_go_off_by_flag_and_environment():
-    runner, _ = build(Claude, disable_subagents=True)
+    runner, _ = build(Claude)
     argv = runner.argv(resume=False)
     assert pairs(argv)["--disallowedTools"] == "Agent(*)"
     assert runner.environment()["CLAUDE_CODE_DISABLE_WORKFLOWS"] == "1"
 
 
 def test_claude_mcp_goes_off_with_settings_sources():
-    runner, _ = build(Claude, disable_mcp=True)
+    runner, _ = build(Claude)
     argv = runner.argv(resume=False)
     assert "--strict-mcp-config" in argv
     assert pairs(argv)["--setting-sources"] == ""
 
 
-def test_claude_leaves_them_alone_unless_asked():
-    runner, _ = build(Claude)
+def test_claude_gets_them_back_only_when_a_chat_opts_in():
+    runner, _ = build(Claude, disable_subagents=False, disable_mcp=False)
     argv = runner.argv(resume=False)
     assert "--disallowedTools" not in argv and "--strict-mcp-config" not in argv
     assert "CLAUDE_CODE_DISABLE_WORKFLOWS" not in runner.environment()
@@ -90,8 +91,8 @@ def test_an_absent_effort_is_not_passed_at_all():
 # ------------------------------------------------------------------- codex
 
 def test_codex_subagents_apps_plugins_and_project_docs_go_off_together():
-    """The spec makes this exact invocation the contract."""
-    assert build(Codex, disable_subagents=True)[0].flags() == [
+    """The spec makes this exact invocation the contract, and it is the default."""
+    assert build(Codex)[0].flags() == [
         "--disable", "apps",
         "--disable", "plugins",
         "-c", "agents.enabled=false",
@@ -99,12 +100,15 @@ def test_codex_subagents_apps_plugins_and_project_docs_go_off_together():
     ]
 
 
-def test_codex_mcp_is_already_gone_with_the_jail():
-    assert build(Codex, disable_mcp=True)[0].flags() == []
+def test_codex_mcp_needs_no_flag_because_the_jail_already_took_it():
+    """Only the subagent flags answer to the switch; the jail does MCP."""
+    quiet = build(Codex, disable_subagents=False, disable_mcp=True)[0].flags()
+    assert "--disable" not in quiet
 
 
-def test_codex_is_left_alone_unless_asked():
-    assert build(Codex)[0].flags() == []
+def test_codex_project_docs_stay_off_even_when_subagents_come_back():
+    """Opting into subagents must not smuggle someone's AGENTS.md back in."""
+    assert build(Codex, disable_subagents=False)[0].flags() == ["-c", "project_doc_max_bytes=0"]
 
 
 def test_codex_turns_run_without_asking_permission():
@@ -136,14 +140,15 @@ def test_agy_resumes_by_conversation_id():
 
 
 def test_agy_says_out_loud_what_it_cannot_switch_off():
-    runner, caught = build(Agy, disable_subagents=True, disable_mcp=True)
+    runner, caught = build(Agy)
     runner.announce()
     said = [e for e in caught if e.type == Event.CONFIG and e.text == "unsupported"]
     assert said and said[0].extra["ignored"] == ["disable_subagents", "disable_mcp"]
 
 
 def test_agy_stays_quiet_when_nothing_was_asked_of_it():
-    runner, caught = build(Agy)
+    """Both opted back on, so there is nothing agy is failing to honour."""
+    runner, caught = build(Agy, disable_subagents=False, disable_mcp=False)
     runner.announce()
     assert not caught
 

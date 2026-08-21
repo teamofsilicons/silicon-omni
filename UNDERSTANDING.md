@@ -27,7 +27,7 @@ def fetch_new_messages():
 
 @chat.on_event
 def handle_event(event):
-    event.type == Event.THINKING # START, THINKING, TOOL.CALL, TOOL.RESULT, END, INJECTED, TEXT, ERROR (auth, limit error, unavailable, etc etc), SWITCH_PROVIDER, NEW_SESSION.
+    event.type == Event.THINKING # START, THINKING, TOOL.CALL, TOOL.RESULT, END, INJECTED, TEXT, ERROR (auth, limit error, unavailable, etc etc. use using event.kind), SWITCH_PROVIDER, NEW_SESSION, some of these could be type of configs EVENT.CONFIG. and with seq. numbers to keep a track of until which point was a provider synced or needs syncing.
     last_event = event.type
     pass # do whatever you want for events
 
@@ -77,7 +77,7 @@ the .send method should be able to send a msg to a new chat or inject in in betw
 
 
 features needed:
-1. persistent sessions loadable via a session id. (sessions are cross provider and written on disk at ~/.omni/sessions/ as {session_id}.jsonl)
+1. persistent sessions loadable via a session id. (sessions are cross provider and written on disk at ~/.omni/sessions/ as {session_id}.jsonl) along with a meta json file to store any session information needed.
 2. event hook on decorators @chat.on_event
 3. omni is a translation layer so we can handle cross provider switching any time.
 
@@ -105,6 +105,10 @@ we will only load the sections that can be loaded into a provider. eg, GoogleSea
 Auth
 There should be a auth status for all cli's installed. And a way to login into it without doing so via the cli itself. they usually give a link to open, then a link they ask for, or a callback. It should be automated. If it can't be done for some reason, surface the problem to the user. or ask them to login directly themselves. No multi-account support yet.
 
+if mid-run a provider turns unauthenticated, and the turn fails and gets captured via Event.ERROR and kind AUTH, then it should remove that provider from the provider's list, report the auth error, and then automcatically switch to the same inteligence level among the remaining providers.
+
+this behaviour is turned on by default and can be stopped using `chat.disable_autoremoving_unauthenticated_providers()`, in which case it will report that its unauthenticated, and end the turn.
+
 ```python
 from omni import Inference
 
@@ -117,12 +121,22 @@ Inference.claude.finish_auth("pass in code or redirect url")
 ```
 
 
+CWD:
+while the files for storing omni details are stored inside ~/.omni/, the sessions that the providers will run will be from the dir that the command was run from.
+eg. if i run `cd ~/Downloads/ && python ~/Documents/abc.py`, and say a claude session is created, then if i ask claude which dir is it in... it should be ~/Downloads/
+
+when its started and omni session meta file has written about this dir as the starting point for this session. all providers triggered within a given omni session will be tied to this dir.
+
+
+
+
 Session Limit
 ```python
 from omni import Inference
 
 Inference.claude.limits
-# > {"5h": {"used": 0.24, "reset": timestamp}, "7d": {"used": 0.88, "reset": timestamp}}
+# > {"5h": {"used": 0.24, "reset": ISO string}, "7d": {"used": 0.88, "reset": ISO string}}
+# make sure all reset time is in ISO strings. for all providers.
 # or it could return "unauthenticated"
 ```
 0.24 -> 24%
@@ -159,7 +173,7 @@ eg: omni session A on claude session B. now switch to google, with session C, ch
 
 Do not store reasoning tokens/encrypted tokens inside omni. just enter a reasoning block that is empty for logging purpose. it will not be used to seed another chat. besides reasoning, log everything else.
 
-
+DO NOT LIMIT how long in the history is loaded. Load the complete context when switching.
 
 
 
@@ -198,6 +212,8 @@ Why it works: codex reads all its settings from one folder, and lets you choose 
 
 codex app-server supports seeding of conversation when switching to codex from any other provider.
 
+by default, use the jailed codex. and also disable any preloaded memories. subagents are opt in.
+
 
 
 Antigravity:
@@ -224,6 +240,15 @@ claude -p --output-format stream-json --input-format stream-json --verbose \
 stops all subagents as well as mcps.
 
 to seed claude with existing conversation, write to the claude's session file.
+
+by default, disable mcp. and also disable any preloaded memories. subagents are opt in.
+
+
+
+TEST:
+Implement a simple test model provider to run automatic and deterministic tests.
+Use live tests with real providers to make sure its real world resilient.
+when running live tests, keep it in the same OMNI_HOME as the real usage. then run a cleanup script after the tests are done. this will ensure that all things are as they would be during a live usage.
 
 
 

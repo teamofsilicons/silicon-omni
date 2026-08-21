@@ -10,6 +10,7 @@ storage moves.
 import json
 import subprocess
 
+from ...shared import clock
 from ..base import Account as Base
 from ..login import Login
 from . import control
@@ -26,11 +27,14 @@ def run(argv: list[str], timeout: float = 20.0) -> tuple[int, str]:
 
 
 def window(entry) -> dict:
-    """``{"utilization": 0-100, "resets_at": iso}`` becomes omni's ``{"used", "reset"}``."""
+    """``{"utilization": 0-100, "resets_at": ...}`` becomes omni's ``{"used", "reset"}``."""
     if not isinstance(entry, dict):
         return {"used": None, "reset": None}
     used = entry.get("utilization")
-    return {"used": None if used is None else round(float(used) / 100, 4), "reset": entry.get("resets_at")}
+    return {
+        "used": None if used is None else round(float(used) / 100, 4),
+        "reset": clock.iso(entry.get("resets_at")),
+    }
 
 
 class Account(Base):

@@ -208,7 +208,7 @@ This is the rule the whole design hangs off.
 chat.intelligence(9)              # noted now
 chat.active_inference_providers(["claude", "openai"])
 chat.system_prompt("...")
-chat.disable_subagents()
+chat.enable_subagents()
 ```
 
 Every one of those is recorded when you call it and **applied at the next turn
@@ -224,9 +224,19 @@ Calling any of them again overwrites the last value. Same for
 chat.system_prompt("...")            # replace the provider's own prompt
 chat.system_prompt_file("p.txt")
 chat.append_system_prompt("...")     # or keep theirs and add
-chat.disable_subagents()             # so only workers you define get used
-chat.disable_mcp()                   # no MCP servers, no external connectors
 ```
+
+A chat starts quiet: **no subagents, no MCP servers, no memory files**. A provider that
+brings its own help makes the same run mean different things on different machines, so
+you opt back in rather than out.
+
+```python
+chat.enable_subagents()              # let the provider spawn its own
+chat.enable_mcp()                    # let it load MCP servers and connectors
+```
+
+Memory files are not a switch. `CLAUDE.md`, auto memory, org memory and `AGENTS.md`
+never load, whichever way the other two are set.
 
 ---
 
@@ -274,7 +284,8 @@ The omni log keeps the structured original, so this form only ever exists inside
 seed handed to somebody else. Going back to Gemini replays Gemini's own session and the
 brackets never happened. **Preserved, not lossy.**
 
-Tool output is capped inside a seed. The log keeps every byte.
+Nothing is trimmed on the way in — not the oldest turns, not a forty-thousand
+character tool result. A provider arriving late gets the whole conversation.
 
 ---
 
@@ -294,14 +305,31 @@ verbatim — a confusing message you can read beats a silent failure.
 
 One account per provider.
 
+### When a login dies mid-run
+
+An unauthenticated CLI cannot finish the turn it is in. By default omni takes that
+provider off the chat, resolves the **same intelligence level** again over whoever is
+left, and carries on there — you get an `ERROR`/`auth`, a `CONFIG`/`provider_removed`
+and a `SWITCH_PROVIDER`, and the conversation continues on another vendor's model.
+
+```python
+chat.disable_autoremoving_unauthenticated_providers()
+```
+
+Turn it off and the auth error is reported and the turn simply ends. Either way the
+failed turn is not replayed: it is in the log, so the next provider reads it, but
+nothing re-runs a tool that may already have run.
+
 ## Limits
 
 ```python
 Inference.openai.limits
-# {'5h': {'used': 0.0, 'reset': 1787209867}, '7d': {'used': 0.16, 'reset': 1787196805}}
+# {'5h': {'used': 0.0,  'reset': '2026-08-21T14:31:07.000Z'},
+#  '7d': {'used': 0.16, 'reset': '2026-08-21T10:53:25.000Z'}}
 ```
 
-`used` is a fraction, `0.16` being 16%. `'unauthenticated'` if you are not signed in.
+`used` is a fraction, `0.16` being 16%. `reset` is an RFC3339 UTC string from every
+provider — one of them answers in epoch seconds, and you never have to know which. `'unauthenticated'` if you are not signed in.
 Every provider is asked in a way that costs no tokens:
 
 | provider | how | note |
@@ -329,8 +357,8 @@ is already on disk in the session file.
 
 ## Per-provider notes
 
-**Claude Code** — flags do the work. Subagents and MCP switch off from the command line
-when you ask; slash commands and memory files (`CLAUDE.md`, auto memory, org memory) are
+**Claude Code** — flags do the work. Subagents and MCP are off by the command line
+unless a chat opts in; slash commands and memory files (`CLAUDE.md`, auto memory, org memory) are
 off unconditionally, so a run means the same thing on anyone's machine. Seeding is a file write into
 `~/.claude/projects/<slug>/<uuid>.jsonl`; resume then treats it as real history. Model
 and effort change over the control channel between turns, so re-tuning does not restart
@@ -341,14 +369,14 @@ under `~/.omni/jails/`, holding exactly two things: a symlink to your real `auth
 (linked, not copied, so a token refresh is not lost) and a near-empty `config.toml`.
 That folder *is* the isolation — codex has nothing left to auto-load, so MCP servers,
 hooks and `AGENTS.md` never appear whether or not you asked. Skills live outside
-`CODEX_HOME` entirely, so `disable_subagents()` switches them off one at a time over the
-protocol. History is seeded with `thread/inject_items`; model and effort are per-turn
+`CODEX_HOME` entirely, so they are switched off one at a time over the protocol.
+`project_doc_max_bytes=0` goes on every launch, so opting back into subagents cannot
+smuggle somebody's `AGENTS.md` in with them. History is seeded with `thread/inject_items`; model and effort are per-turn
 parameters, so re-tuning is free.
 **Antigravity** — the most restricted. There is no flag for MCP, no flag for subagents,
 and no way to seed history, so omni lets it load what it wants and folds prior
-conversation into the front of the next message — one turn, not two. `disable_subagents()`
-and `disable_mcp()` cannot be honoured here; omni logs a `CONFIG` event saying so rather
-than pretending. An injected message runs as its own turn instead of joining the one in
+conversation into the front of the next message — one turn, not two. Neither isolation
+switch can be honoured here; omni logs a `CONFIG` event saying so rather than pretending. An injected message runs as its own turn instead of joining the one in
 flight, and there is no way to interrupt agy at all. Its cold start is
 ~10s per launch. An unrecognised conversation id makes agy silently start a new one, so
 omni checks the id it gets back and re-seeds from the top if it was not the one it asked
@@ -393,8 +421,31 @@ Adding a provider means an `Account` and a `Runner` — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the pieces are shaped this way.
 
 ```bash
-pytest            # fast, no CLI needed
-pytest -m live    # drives the real CLIs; needs auth, spends a little quota
+pytest                        # fast, no CLI needed
+pytest -m live                # drives the real CLIs; needs auth, spends a little quota
+python3 scripts/cleanup.py    # afterwards: takes the live sessions back out of ~/.omni
 ```
+
+Live tests deliberately run against your real `~/.omni`, because a test that uses
+different paths from a real run is not testing a real run. Everything else gets a home
+of its own and never touches the network.
+
+For your *own* tests there is a provider that needs no CLI, no login and no quota, and
+answers the same way every time:
+
+```python
+from omni import Inference
+from omni.providers import test
+
+test.install()                                    # registers it, pins a whole 0-10 dial
+chat = Inference.load_or_create_session("t", ["test"])
+chat.start()
+chat.send("hello")            # -> TEXT  'echo: hello'
+chat.send("[tool:ls]")        # -> TOOL.CALL + TOOL.RESULT
+chat.send("[recall]")         # -> everything it has been told, seeded history included
+```
+
+It is not registered until you call `install()`, so it can never appear in
+`get_available_providers()` by accident.
 
 MIT.

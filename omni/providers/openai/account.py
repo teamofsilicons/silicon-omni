@@ -8,6 +8,7 @@ connection is held open until the login lands.
 
 import threading
 
+from ...shared import clock
 from ..base import Account as Base
 from .appserver import AppServer, AppServerError
 
@@ -39,7 +40,7 @@ def windows(payload: dict) -> dict:
             if key and out[key]["used"] is None:
                 out[key] = {
                     "used": round(float(window.get("usedPercent", 0)) / 100, 4),
-                    "reset": window.get("resetsAt"),
+                    "reset": clock.iso(window.get("resetsAt")),
                 }
     return out
 

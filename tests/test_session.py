@@ -106,3 +106,27 @@ def test_a_session_remembers_where_it_runs_and_how_clever_it_is():
     assert again.config.cwd == os.path.realpath("/tmp")
     assert again.rung()["model"] == "small"
     again.stop()
+
+def test_a_new_session_runs_where_the_command_was_run(monkeypatch, tmp_path):
+    """omni's own files live in ~/.omni; the provider works where you started it."""
+    from omni.chat import Chat
+
+    started = tmp_path / "project"
+    started.mkdir()
+    monkeypatch.chdir(started)
+
+    chat = Chat("rooted", [])
+    try:
+        assert chat.config.cwd == os.path.realpath(started)
+        assert chat.meta.get("cwd") == os.path.realpath(started), "and it is written down"
+    finally:
+        chat.stop()
+
+    # Every provider in this session is tied to that directory, wherever the
+    # next process happens to be started from.
+    monkeypatch.chdir(tmp_path)
+    again = Chat("rooted", [])
+    try:
+        assert again.config.cwd == os.path.realpath(started)
+    finally:
+        again.stop()

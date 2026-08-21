@@ -33,7 +33,10 @@ class FakeAccount(base.Account):
 
     @property
     def limits(self):
-        return {"5h": {"used": 0.1, "reset": 0}, "7d": {"used": 0.2, "reset": 0}}
+        return {
+            "5h": {"used": 0.1, "reset": "2026-01-01T00:00:00.000Z"},
+            "7d": {"used": 0.2, "reset": "2026-01-08T00:00:00.000Z"},
+        }
 
 
 class FakeRunner(base.Runner):
@@ -62,6 +65,16 @@ class FakeRunner(base.Runner):
         self.sent.append(text)
         if self.autoreply:
             self.reply(f"echo:{text}")
+
+    def fail(self, kind: str, error: str = "session is no longer signed in", ends: bool = False) -> None:
+        """Break the way a real CLI breaks: an error event, mid-turn.
+
+        ``ends`` adds the ``END`` that all three shipped adapters put out in the
+        same breath as the error — the pair, not just the half of it.
+        """
+        self.emit(Event(type=Event.ERROR, provider=self.name, kind=kind, ok=False, error=error))
+        if ends:
+            self.emit(Event(type=Event.END, provider=self.name))
 
     def reply(self, text: str) -> None:
         self.emit(Event(type=Event.TEXT, provider=self.name, model=self.config.model, text=text))
