@@ -235,6 +235,11 @@ chat.enable_subagents()              # let the provider spawn its own
 chat.enable_mcp()                    # let it load MCP servers and connectors
 ```
 
+Not every provider can honour those. Codex is always jailed, so `enable_mcp()` does
+not reach it; agy has no switch for either. The provider that cannot say yes logs a
+`CONFIG`/`unsupported` event saying which of your settings it ignored — once, when you
+set it and when the conversation arrives there, rather than on every relaunch.
+
 Memory files are not a switch. `CLAUDE.md`, auto memory, org memory and `AGENTS.md`
 never load, whichever way the other two are set.
 
@@ -329,7 +334,9 @@ Inference.openai.limits
 ```
 
 `used` is a fraction, `0.16` being 16%. `reset` is an RFC3339 UTC string from every
-provider — one of them answers in epoch seconds, and you never have to know which. `'unauthenticated'` if you are not signed in.
+provider — one of them answers in epoch seconds, and you never have to know which.
+Either can be `None`: some plans report no windows, and *nobody said* is not the same
+as *nothing spent*. `'unauthenticated'` if you are not signed in.
 Every provider is asked in a way that costs no tokens:
 
 | provider | how | note |
@@ -447,5 +454,20 @@ chat.send("[recall]")         # -> everything it has been told, seeded history i
 
 It is not registered until you call `install()`, so it can never appear in
 `get_available_providers()` by accident.
+
+For the unhappy paths, `test.running()` hands you the live runner. It records what it
+was seeded with and what it was sent, and it can be driven by hand:
+
+```python
+test.install("alpha", "beta")            # two of them, so you can test a switch
+test.running("alpha").autoreply = False  # hold the turn open
+chat.send("hello")
+test.running("alpha").fail("auth")       # now lose the login
+```
+
+Each knob mimics something a real CLI does. `defer` is agy, which only sees history when
+the next message goes out. `tunable = False` is agy again, which cannot change model
+without a restart. A native id starting with `gone-` is any provider that has forgotten a
+session omni thinks it still has.
 
 MIT.

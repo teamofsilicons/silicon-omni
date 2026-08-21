@@ -100,7 +100,9 @@ class Account:
         """``{"5h": {"used": 0.24, "reset": iso}, "7d": {...}}`` or ``"unauthenticated"``.
 
         ``used`` is a fraction (``0.24`` is 24%) and ``reset`` is an RFC3339
-        UTC string whatever the provider natively answers in.
+        UTC string whatever the provider natively answers in. Either may be
+        ``None``: some plans report no windows at all, and "nobody said" is a
+        different thing from "you have spent nothing".
         """
         raise NotImplementedError
 

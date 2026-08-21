@@ -90,12 +90,12 @@ def test_a_session_remembers_where_it_runs_and_how_clever_it_is():
     from omni.chat import Chat
     from omni.intelligence import registry
 
-    from .fake import dial, make, rung
+    from omni.providers.test import dial, make, rung
     from omni import providers
 
     providers.register("solo", *make("solo"))
-    registry.write_cache(["solo"], dial(rung("solo", "big", "high", 1500, 5.0),
-                                        rung("solo", "small", "low", 900, 1.0)))
+    registry.write_cache(["solo"], dial(rung("solo", "big", "high"),
+                                        rung("solo", "small", "low")))
     first = Chat("remembered", ["solo"])
     first.intelligence(0)
     first.cwd("/tmp")  # resolved through symlinks on the way in

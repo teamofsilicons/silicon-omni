@@ -57,6 +57,7 @@ class Runner(base.Runner):
     # ------------------------------------------------------------- lifecycle
 
     def start(self, native_id: str = "", history=None) -> None:
+        self.announce()
         home = jail.build(self.session_id)
         self.server = AppServer(
             env=dict(os.environ, CODEX_HOME=str(home)),
@@ -72,6 +73,27 @@ class Runner(base.Runner):
         seed = transcript(history or [])
         if seed:
             self.server.call("thread/inject_items", {"threadId": self.native_id, "items": items(seed)})
+
+    def announce(self) -> None:
+        """MCP is not a switch here, so say so rather than let a caller believe it.
+
+        CODEX_HOME is redirected whether or not it was asked for — the jail *is*
+        how omni isolates codex. A chat that opts back into MCP still does not
+        get it, and quietly not getting it is the worst of the options.
+        """
+        if self.config.disable_mcp:
+            return
+        self.emit(
+            Event(
+                type=Event.CONFIG,
+                provider=self.name,
+                text="unsupported",
+                extra={
+                    "ignored": ["enable_mcp"],
+                    "why": "codex always runs in a jailed CODEX_HOME, so MCP cannot load",
+                },
+            )
+        )
 
     def flags(self) -> list[str]:
         """MCP is already gone with the jail; this is everything else.

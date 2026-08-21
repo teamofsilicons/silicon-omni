@@ -166,16 +166,18 @@ there is nothing in between that anybody should pick.
 
 ## Testing
 
-Two providers that are not providers, for two different jobs.
+One provider that is not a provider, and it ships.
 
-`tests/fake.py` is the engine's crash-test dummy: it records what it was seeded with and
-what it was sent, and fails or finishes exactly when a test says so. Everything about
-turns, boundaries, injection, switching and failover is driven through it, offline.
+`omni.providers.test` needs no CLI, no login and no quota, answers deterministically,
+and pins its own 0-10 dial so nothing reaches the network. It records what it was seeded
+with and what it was sent, and it fails or finishes exactly when you say so — which is
+what omni's own suite needs to drive turns, boundaries, injection, switching and
+failover, and equally what anyone testing their agent on top of omni needs.
 
-`omni.providers.test` ships in the package, because omni's users need the same thing for
-their own tests. It needs no CLI, no login and no quota, answers deterministically, and
-pins its own 0-10 dial so nothing reaches the network. Nothing registers it but an
-explicit `install()`, so it cannot leak into a real `get_available_providers()`.
+There used to be a second one under `tests/`. Two implementations of the same idea drift,
+and the private one was where the useful knobs lived — so it was the shipped one that was
+worse. Nothing registers it but an explicit `install()`, so it cannot leak into a real
+`get_available_providers()`.
 
 Adapter tests use lines captured verbatim from real CLI runs. `pytest -m live` runs the
 real thing — against the real `~/.omni`, deliberately, since a test that uses different

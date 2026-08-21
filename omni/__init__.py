@@ -18,5 +18,5 @@ from .inference import Inference
 from .intelligence import NoDial
 from .session import SessionBusy
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["Inference", "Event", "SessionBusy", "NoDial"]

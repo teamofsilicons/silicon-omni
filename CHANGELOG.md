@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.0
+
+**One test provider, not two.** `omni.providers.test` absorbs everything the private
+double under `tests/` could do, because all of it is useful to anyone testing their own
+code against omni — not just to omni's own suite:
+
+```python
+test.install("alpha", "beta")            # two of them, so you can test a switch
+test.running("alpha").autoreply = False  # hold the turn open
+chat.send("hello")
+test.running("alpha").fail("auth")       # now lose the login
+```
+
+`install()` takes provider names and an optional set of rungs; `running()` hands you the
+live runner, which records `given` and `sent`. The knobs each mimic a real CLI: `defer`
+is agy only seeing history with the next message, `tunable = False` is agy being unable
+to change model without a restart, and a native id starting with `gone-` is any provider
+that has forgotten a session omni thinks it still has.
+
+**A provider says what it cannot do once.** An `unsupported` notice now fires when you
+set the thing and when the conversation arrives on that provider — not on every relaunch
+underneath an unchanged conversation.
+
+**Codex says that `enable_mcp()` will not reach it.** CODEX_HOME is redirected whether or
+not you asked, so opting back into MCP does not get you MCP. It now logs that rather than
+letting you believe your servers are loaded.
+
+**`used` and `reset` may be `None`.** Documented and tested across all three providers:
+some plans report no windows, and *nobody said* is not the same as *nothing spent*.
+
 ## 0.2.0
 
 **Breaking: a chat now starts quiet.** `disable_subagents` and `disable_mcp` both

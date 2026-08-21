@@ -33,6 +33,11 @@ MODEL_EVENTS = (Event.TEXT, Event.THINKING, Event.TOOL.CALL, Event.TOOL.RESULT)
 #: Errors that end the turn rather than just being reported.
 FATAL = (AUTH, CRASH)
 
+#: Notices that are true of a provider rather than of a moment. Worth saying
+#: when you ask for the thing, and when the conversation arrives somewhere that
+#: cannot do it — not every time a process restarts underneath it.
+ONCE = ("unsupported", "approximated")
+
 
 class Chat:
     """A persistent conversation. Get one from ``Inference.load_or_create_session``."""
@@ -59,6 +64,7 @@ class Chat:
         self.in_turn = False
         self.stopping = False
         self.autoremove = True
+        self.announced: set[tuple] = set()
         self.state = IDLE
 
     # ------------------------------------------------------------------ setup
@@ -98,23 +104,28 @@ class Chat:
 
         Already the default; here so asking for it out loud still reads.
         """
-        self.config.disable_subagents = True
-        self.note("subagents", on=False)
+        self.isolation("subagents", False)
 
     def enable_subagents(self) -> None:
         """Let the provider spawn its own subagents. Off unless you ask."""
-        self.config.disable_subagents = False
-        self.note("subagents", on=True)
+        self.isolation("subagents", True)
 
     def disable_mcp(self) -> None:
         """No MCP servers, no external connectors. Already the default."""
-        self.config.disable_mcp = True
-        self.note("mcp", on=False)
+        self.isolation("mcp", False)
 
     def enable_mcp(self) -> None:
-        """Let the provider load its MCP servers and connectors. Off unless you ask."""
-        self.config.disable_mcp = False
-        self.note("mcp", on=True)
+        """Let the provider load its MCP servers and connectors. Off unless you ask.
+
+        Not every provider can honour it — codex is always jailed and agy has no
+        switch at all — and the one that cannot says so.
+        """
+        self.isolation("mcp", True)
+
+    def isolation(self, what: str, on: bool) -> None:
+        setattr(self.config, f"disable_{what}", not on)
+        self.announced.clear()  # whether a provider can honour this may have changed
+        self.note(what, on=on)
 
     def disable_autoremoving_unauthenticated_providers(self) -> None:
         """Stop dropping a provider that loses its login mid-run.
@@ -249,6 +260,8 @@ class Chat:
         self.inbox.put(("event", event))
 
     def absorb(self, event: Event) -> None:
+        if self.repeated(event):
+            return
         self.record(event)
         if self.stopping or self.straggler(event):
             return  # still logged, but there is nothing left to react to
@@ -259,6 +272,22 @@ class Chat:
             self.finish_turn()
         elif event.type == Event.ERROR and event.kind in FATAL:
             self.fatal(event)
+
+    def repeated(self, event: Event) -> bool:
+        """Has this provider already told us it cannot do this?
+
+        Forgotten when the setting changes and when the conversation moves to
+        another provider, which are the two moments the answer can differ.
+        """
+        if event.type != Event.CONFIG or event.text not in ONCE:
+            return False
+        # repr, not a tuple: extra holds lists, and a tuple around a list
+        # cannot be hashed — which would make this raise instead of dedupe.
+        said = (event.text, event.provider, repr(sorted(event.extra.items(), key=str)))
+        if said in self.announced:
+            return True
+        self.announced.add(said)
+        return False
 
     def straggler(self, event: Event) -> bool:
         """Did this come from a provider omni has already moved on from?
@@ -425,6 +454,8 @@ class Chat:
             self.meta.bind(previous, self.runner.native_id)
             self.runner.stop()
             self.runner = None
+        if previous != rung["provider"]:
+            self.announced.clear()  # a new provider gets to say what it cannot do
         if previous and previous != rung["provider"]:
             self.record(
                 Event(

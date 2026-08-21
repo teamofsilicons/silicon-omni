@@ -11,7 +11,7 @@ from omni import providers
 from omni.chat import Chat
 from omni.events import Event
 
-from .fake import LIVE
+from omni.providers.test import LIVE
 
 
 def settle(chat, want="waiting", timeout=5.0):
@@ -52,7 +52,7 @@ def test_a_turn_is_recorded_as_events(chat):
     assert settle(chat)
     types = [e.type for e in seen]
     assert Event.START in types and Event.TEXT in types and Event.END in types
-    assert [e.text for e in seen if e.type == Event.TEXT] == ["echo:hello"]
+    assert [e.text for e in seen if e.type == Event.TEXT] == ["echo: hello"]
 
 
 def test_history_survives_a_reload(chat):
@@ -62,7 +62,7 @@ def test_history_survives_a_reload(chat):
     chat.stop()
     again = Chat("engine", ["alpha", "beta"])
     texts = [e.text for e in again.store.history()]
-    assert "remember me" in texts and "echo:remember me" in texts
+    assert "remember me" in texts and "echo: remember me" in texts
     again.stop()
 
 
@@ -109,7 +109,7 @@ def test_switching_provider_seeds_the_new_one(chat):
     beta = LIVE["beta"]
     assert chat.runner.name == "beta"
     seeded = [e.text for e in beta.given]
-    assert "one" in seeded and "echo:one" in seeded
+    assert "one" in seeded and "echo: one" in seeded
     assert "two" not in seeded, "the live message is sent, not seeded"
     assert beta.sent == ["two"]
     assert Event.SWITCH_PROVIDER in [e.type for e in chat.store.events()]
@@ -130,7 +130,7 @@ def test_coming_back_only_replays_what_was_missed(chat):
     assert chat.runner.name == "alpha"
     assert alpha.resumed and alpha.native_id == alpha_native, "should resume its own session"
     seeded = [e.text for e in alpha.given]
-    assert "two" in seeded and "echo:two" in seeded, "the part it missed"
+    assert "two" in seeded and "echo: two" in seeded, "the part it missed"
     assert "one" not in seeded, "it already knew this"
     assert alpha.sent == ["three"]
 
@@ -204,7 +204,7 @@ def test_a_provider_that_lost_its_session_is_told_everything_again(chat):
     try:
         alpha = LIVE["alpha"]
         seeded = [e.text for e in alpha.given]
-        assert "one" in seeded and "echo:one" in seeded, "it should be told the whole story"
+        assert "one" in seeded and "echo: one" in seeded, "it should be told the whole story"
         assert alpha.native_id != "gone-1"
         assert "reseed" in [e.text for e in again.store.events() if e.type == Event.CONFIG]
     finally:
@@ -372,11 +372,11 @@ def test_a_model_change_within_one_provider_costs_no_restart(chat, two_providers
     """Restarting would make the provider re-read the whole conversation."""
     from omni.intelligence import registry
 
-    from .fake import dial, rung
+    from omni.providers.test import dial, rung
 
     registry.write_cache(
         ["alpha", "beta"],
-        dial(rung("alpha", "alpha-big", "high", 1400, 4.0), rung("alpha", "alpha-small", "low", 900, 1.0)),
+        dial(rung("alpha", "alpha-big", "high"), rung("alpha", "alpha-small", "low")),
     )
     chat.intelligence(0)
     chat.start()
@@ -398,11 +398,11 @@ def test_a_provider_that_cannot_retune_is_restarted_instead(chat, two_providers)
     from omni import providers
     from omni.intelligence import registry
 
-    from .fake import dial, rung
+    from omni.providers.test import dial, rung
 
     registry.write_cache(
         ["alpha", "beta"],
-        dial(rung("alpha", "alpha-big", "high", 1400, 4.0), rung("alpha", "alpha-small", "low", 900, 1.0)),
+        dial(rung("alpha", "alpha-big", "high"), rung("alpha", "alpha-small", "low")),
     )
     providers.classes("alpha")[1].tunable = False
     chat.intelligence(0)

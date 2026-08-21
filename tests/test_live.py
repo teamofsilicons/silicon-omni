@@ -38,8 +38,15 @@ def talk(session_id, providers, level=CHEAPEST):
 
     The directory is stable across runs on purpose: claude resumes by working
     directory, so a fresh temp dir every time would only ever test reseeding.
+
+    Sessions are stable too — that is the point of them — so the file may
+    already hold everything a previous run did. ``chat.from_here`` is the seq
+    it stood at before this run, and every assertion below is scoped to what
+    came after it. Asserting over the whole file passes exactly once, on a
+    clean machine, and has told you nothing since.
     """
     chat = Chat(session_id, providers)
+    chat.from_here = chat.store.seq + 1
     chat.cwd(str(paths.ensure(paths.home() / "cwd" / session_id)))
     chat.intelligence(level)
     chat.disable_subagents()
@@ -47,8 +54,13 @@ def talk(session_id, providers, level=CHEAPEST):
     return chat
 
 
+def this_run(chat):
+    """Only the events this run appended, whatever the session already held."""
+    return Store(chat.session_id).events(since=chat.from_here)
+
+
 def said(chat):
-    return " ".join(e.text for e in Store(chat.session_id).events() if e.type == Event.TEXT)
+    return " ".join(e.text for e in this_run(chat) if e.type == Event.TEXT)
 
 
 @pytest.fixture(params=["claude", "openai", "google"])
@@ -71,8 +83,7 @@ def test_a_provider_answers_runs_a_tool_and_remembers(provider):
     finally:
         chat.stop()
 
-    events = Store(chat.session_id).events()
-    kinds = [e.type for e in events]
+    kinds = [e.type for e in this_run(chat)]
     assert kinds.count(Event.END) == 3, "three turns, three endings"
     assert Event.TOOL.CALL in kinds and Event.TOOL.RESULT in kinds
     assert "omni-live" in said(chat), "the third turn had to remember the first two"
@@ -115,5 +126,5 @@ def test_a_conversation_survives_moving_between_providers():
     finally:
         chat.stop()
 
-    kinds = [e.type for e in Store("live-switch").events()]
+    kinds = [e.type for e in this_run(chat)]
     assert kinds.count(Event.SWITCH_PROVIDER) >= 2

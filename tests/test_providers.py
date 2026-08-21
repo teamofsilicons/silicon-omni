@@ -327,3 +327,21 @@ def test_a_yes_is_remembered_longer_than_a_no(monkeypatch):
     answers.append("authenticated")
     now[0] += 15
     assert account.auth_status == "authenticated", "a no is re-checked quickly"
+
+
+def test_a_window_nobody_reported_is_none_rather_than_zero():
+    """`used: 0.0` means "you have spent nothing"; `None` means "nobody said".
+    Some enterprise plans report no windows at all, and the difference matters."""
+    from omni.providers.google import account as agy_account
+    from omni.providers.openai import account as codex_account
+
+    assert claude_window({}) == {"used": None, "reset": None}
+    assert claude_window({"utilization": 24}) == {"used": 0.24, "reset": None}, "no reset is not epoch 0"
+    assert agy_account.windows("") == {
+        "5h": {"used": None, "reset": None},
+        "7d": {"used": None, "reset": None},
+    }
+    assert codex_account.windows({}) == {
+        "5h": {"used": None, "reset": None},
+        "7d": {"used": None, "reset": None},
+    }

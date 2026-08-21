@@ -2,8 +2,7 @@ import pytest
 
 from omni import providers
 from omni.intelligence import registry
-
-from .fake import LIVE, dial, make, rung
+from omni.providers import test as double
 
 
 @pytest.fixture(autouse=True)
@@ -19,18 +18,18 @@ def omni_home(tmp_path, monkeypatch, request):
         monkeypatch.setenv("OMNI_HOME", str(tmp_path / "omni"))
         monkeypatch.setattr(registry, "fetch", lambda name, timeout=5.0: None)
     providers.CACHE.clear()
-    LIVE.clear()
+    double.LIVE.clear()
     yield
     providers.EXTRA.clear()
     providers.CACHE.clear()
+    double.LIVE.clear()
 
 
 @pytest.fixture
 def two_providers():
-    """Register 'alpha' (cheap) and 'beta' (strong) and pin their dials."""
-    for name in ("alpha", "beta"):
-        providers.register(name, *make(name))
-    weak = rung("alpha", "alpha-small", "low", 900, 1.0)
-    strong = rung("beta", "beta-big", "high", 1800, 9.0)
-    registry.write_cache(["alpha", "beta"], dial(strong, weak))
-    return ["alpha", "beta"]
+    """'alpha' (cheap) at the bottom of the dial and 'beta' (strong) at the top."""
+    return double.install(
+        "beta",
+        "alpha",
+        rungs=[double.rung("beta", "beta-big", "high"), double.rung("alpha", "alpha-small", "low")],
+    )

@@ -166,3 +166,17 @@ def test_agy_puts_the_prompt_before_the_history():
     runner, _ = build(Agy, system_prompt="be terse")
     opening = runner.opening([E(type=E.START, text="earlier question")])
     assert opening.index("be terse") < opening.index("earlier question")
+
+
+def test_codex_says_that_enabling_mcp_will_not_work():
+    """The jail is not a switch. A chat that opts back in still does not get it."""
+    runner, caught = build(Codex, disable_mcp=False)
+    runner.announce()
+    said = [e for e in caught if e.type == Event.CONFIG and e.text == "unsupported"]
+    assert said and said[0].extra["ignored"] == ["enable_mcp"]
+
+
+def test_codex_stays_quiet_when_the_jail_is_what_you_wanted():
+    runner, caught = build(Codex)
+    runner.announce()
+    assert not caught

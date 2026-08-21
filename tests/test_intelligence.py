@@ -9,11 +9,11 @@ import json
 
 from omni.intelligence import registry
 
-from .fake import dial, rung
+from omni.providers.test import dial, rung
 
-STRONG = rung("a", "a-top", "max", 1800, 9.0)
-MIDDLE = rung("b", "b-mid", "high", 1400, 2.0)
-CHEAP = rung("a", "a-floor", "low", 900, 0.2)
+STRONG = rung("a", "a-top", "max")
+MIDDLE = rung("b", "b-mid", "high")
+CHEAP = rung("a", "a-floor", "low")
 
 
 def test_every_level_from_zero_to_ten_resolves():
@@ -33,7 +33,7 @@ def test_ten_is_the_best_you_can_reach_and_zero_the_cheapest():
 def test_each_set_of_providers_has_its_own_dial():
     """Losing a provider is a different dial, not a filtered one."""
     registry.write_cache(["a", "b"], dial(STRONG, CHEAP))
-    registry.write_cache(["a"], dial(rung("a", "a-alone", "high", 1500, 5.0), CHEAP))
+    registry.write_cache(["a"], dial(rung("a", "a-alone", "high"), CHEAP))
     assert registry.table(["a", "b"])[10]["model"] == "a-top"
     assert registry.table(["a"])[10]["model"] == "a-alone"
 

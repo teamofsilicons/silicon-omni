@@ -11,28 +11,25 @@ import pytest
 from omni import providers
 from omni.chat import Chat
 from omni.events import AUTH, Event
-from omni.intelligence import registry
-
-from .fake import LIVE, dial, make, rung
+from omni.providers import test as double
+from omni.providers.test import LIVE, rung
 
 TOP = 10  # the strongest rung, wherever it happens to live
 
 
 @pytest.fixture
 def pair():
-    """alpha and beta, each with a dial of its own as well as a shared one.
+    """beta strong at the top of the dial, alpha cheap at the bottom.
 
-    The registry serves one dial per set of providers, so dropping beta has to
-    find a dial for ``["alpha"]`` — exactly what a real registry would return.
+    ``install`` pins a dial for the pair *and* one for each of them alone, the
+    way a real registry serves one per set of providers — which is what dropping
+    a provider mid-run needs in order to resolve at all.
     """
-    for name in ("alpha", "beta"):
-        providers.register(name, *make(name))
-    weak = rung("alpha", "alpha-small", "low")
-    strong = rung("beta", "beta-big", "high")
-    registry.write_cache(["alpha", "beta"], dial(strong, weak))
-    registry.write_cache(["alpha"], dial(weak))
-    registry.write_cache(["beta"], dial(strong))
-    return ["alpha", "beta"]
+    return double.install(
+        "beta",
+        "alpha",
+        rungs=[rung("beta", "beta-big", "high"), rung("alpha", "alpha-small", "low")],
+    )
 
 
 @pytest.fixture
@@ -115,7 +112,7 @@ def test_the_chat_keeps_working_after_the_failover(chat):
 def test_disabling_the_behaviour_ends_the_turn_and_keeps_the_provider(chat):
     chat.disable_autoremoving_unauthenticated_providers()
     midturn_auth_failure(chat)
-    assert chat.providers == ["alpha", "beta"], "nothing was dropped"
+    assert sorted(chat.providers) == ["alpha", "beta"], "nothing was dropped"
     assert chat.runner is None, "but the turn is over and the runner is down"
     errors = [e for e in chat.store.events() if e.kind == AUTH]
     assert errors, "the auth failure is still reported"
@@ -144,7 +141,7 @@ def test_a_limit_error_is_not_an_auth_error(chat):
     assert settle(chat, want="busy")
     LIVE["beta"].fail("limit", "429 rate limited")
     assert settle(chat, want="busy")
-    assert chat.providers == ["alpha", "beta"]
+    assert sorted(chat.providers) == ["alpha", "beta"]
 
 
 def test_a_second_error_from_the_provider_we_left_is_ignored(chat):
