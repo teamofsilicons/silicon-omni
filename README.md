@@ -1,7 +1,8 @@
 # silicon omni
 
-One Python interface for **Claude Code**, **Codex** and **Antigravity** — driven by the
-subscriptions you already pay for, not API keys.
+One persistent interface for **Claude Code**, **Codex** and **Antigravity** — driven by
+the subscriptions you already pay for, not API keys. A small Rust daemon keeps the
+providers and conversations warm; Python is the first client.
 
 ```python
 from omni import Inference, Event
@@ -19,7 +20,8 @@ chat.send("what changed in this repo today?")
 ```
 
 The interesting part is not that it wraps three CLIs. It is that a conversation can
-**move between them mid-flight** and carry on where it left off.
+**move between them mid-flight**, survive the program that opened it, and carry on
+where it left off.
 
 ---
 
@@ -40,6 +42,11 @@ everything that came before already in its head.
 ```bash
 pip install silicon-omni
 ```
+
+The wheel includes `omnid`, the Rust daemon. The first call starts it automatically;
+later programs connect to the same Unix socket under `~/.omni`. There is no service to
+install and no API server to configure. Set `OMNI_HOME` to move all state, or
+`OMNI_DAEMON` to use a particular daemon binary while developing.
 
 Zero runtime dependencies. You bring the CLIs:
 
@@ -245,17 +252,39 @@ never load, whichever way the other two are set.
 
 ---
 
-## Sessions, and how switching works
+## Sessions, clients, and how switching works
 
 `~/.omni/sessions/{id}.jsonl` is the source of truth. It is the event log — the same
-objects your handlers see, appended in order. It outlives any single provider.
+objects your handlers see, appended in order. It outlives any single provider and any
+single Python process.
 
 ```python
 chat = Inference.load_or_create_session("nightly-triage")
 ```
 
-One live chat per session id. A second attempt raises `SessionBusy`; a lock whose owner
-died is reclaimed, so a crash never wedges a session shut.
+The daemon owns one live conversation per session id, and any number of clients may
+attach to it. Every attached client hears the same ordered event stream, and any of
+them may send:
+
+```python
+first = Inference.load_or_create_session("nightly-triage").start()
+second = Inference.load_or_create_session("nightly-triage").start()
+
+first.send("from the worker")       # both clients hear the answer
+second.send("from the dashboard")  # either client can drive the chat
+```
+
+`chat.detach()` stops listening but leaves the provider hot. Reopening the id during
+the 15-minute idle grace period reconnects to the same running conversation. `stop()`
+is deliberately different: it ends the session and shuts its providers down.
+
+By default `start()` replays the whole event log to a newly attached client. Pass the
+next sequence number you need to resume exactly, or `since=-1` to hear only new events:
+
+```python
+chat.start(since=last_seq + 1)
+watcher.start(since=-1)
+```
 
 Alongside it, `{id}.meta.json` remembers each provider's **own** session and how far up
 the omni log it has already seen:
@@ -355,10 +384,11 @@ def log(event):
     write_somewhere(event.to_dict())
 ```
 
-Everything `on_event` sees, plus omni's own bookkeeping: every launch, model change,
-provider switch, new session, message in, tool call, error, stop. All of it is the same
-`Event` type, so it is parsable without a second schema, and it is the same thing that
-is already on disk in the session file.
+Both hooks receive the daemon's complete event stream: every launch, model change,
+provider switch, new session, message in, tool call, error, and stop. `logs` additionally
+receives a local `ERROR`/`handler` if one of this Python client's callbacks raises. All
+of it is the same `Event` type, so it is parsable without a second schema; daemon events
+are the same records already on disk in the session file.
 
 ---
 
@@ -371,8 +401,10 @@ off unconditionally, so a run means the same thing on anyone's machine. Seeding 
 and effort change over the control channel between turns, so re-tuning does not restart
 anything or re-read the conversation.
 
-**Codex** — the app server, not `exec`. It always runs against a `CODEX_HOME` of its own
-under `~/.omni/jails/`, holding exactly two things: a symlink to your real `auth.json`
+**Codex** — the app server, not `exec`. One warm app server can carry multiple omni
+sessions, routing notifications by Codex thread id. It always runs against a
+`CODEX_HOME` of its own under `~/.omni/jails/`, holding exactly two things: a symlink
+to your real `auth.json`
 (linked, not copied, so a token refresh is not lost) and a near-empty `config.toml`.
 That folder *is* the isolation — codex has nothing left to auto-load, so MCP servers,
 hooks and `AGENTS.md` never appear whether or not you asked. Skills live outside
@@ -398,25 +430,28 @@ for.
 - **Tools are observed, not defined.** omni does not install tools into a provider or
   rename theirs. Whatever the CLI does, omni reports.
 - **One account per provider.** No multi-account support.
-- **A switch is a real restart** of the provider process, so it costs the destination a
-  context read. Model changes within a provider do not.
+- **A switch may cost a context read.** Providers that can be caught up in place stay
+  parked and warm. Claude must restart when it missed history; model changes within a
+  provider are re-tuned where its protocol permits.
 
 ---
 
 ## Contributing
 
-`omni/` is small on purpose and split the way the problem is:
+The public Python package is intentionally thin. The daemon and provider protocols live
+in Rust:
 
 ```
 omni/
-  events.py        the vocabulary — one type for everything
-  chat.py          the engine: one conductor thread, turn boundaries, switching
-  inference.py     the front door
-  translate.py     history → something a foreign provider can read
-  session/         the log, the provider map, the one-owner lock
-  intelligence/    the 0-10 dial and its ladder
-  providers/       claude/ · openai/ · google/, plus the contract they share
-  shared/          paths, jsonl, clock, callback bus, subprocess plumbing
+  chat.py          Python session handle and callback delivery
+  client/          Unix-socket transport and automatic daemon startup
+  events.py        Python view of the shared event vocabulary
+  inference.py     the front door: sessions, accounts, providers, dial
+  providers/test.py  control surface for the shipped test provider
+crates/
+  omni-core/       conductor, sessions, translation, and provider adapters
+  omni-daemon/     session registry and NDJSON-over-Unix-socket server
+  omni-client/     Rust client surface (in development)
 ```
 
 The dial, the landing page and the reference live in
@@ -424,13 +459,15 @@ The dial, the landing page and the reference live in
 exist is that repo's problem; running them is this one's.
 
 Adding a provider means an `Account` and a `Runner` — see
-[`omni/providers/base.py`](omni/providers/base.py), then `providers.register(...)`.
+[`crates/omni-core/src/providers/base.rs`](crates/omni-core/src/providers/base.rs) and
+the three adapters beside it.
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the pieces are shaped this way.
 
 ```bash
-pytest                        # fast, no CLI needed
-pytest -m live                # drives the real CLIs; needs auth, spends a little quota
-python3 scripts/cleanup.py    # afterwards: takes the live sessions back out of ~/.omni
+cargo test --workspace        # core, adapters, protocol, conductor
+pytest                        # Python through a real daemon; no vendor CLI needed
+pytest -m live                # real CLIs; needs auth and spends a little quota
+python3 scripts/cleanup.py    # afterwards: takes live-test sessions out of ~/.omni
 ```
 
 Live tests deliberately run against your real `~/.omni`, because a test that uses

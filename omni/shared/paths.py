@@ -1,6 +1,8 @@
-"""Every path omni owns, in one place.
+"""Where omni keeps things.
 
-Set ``OMNI_HOME`` to relocate the whole tree (tests do exactly this).
+One tree, shared by the daemon and every client. Set ``OMNI_HOME`` to move it —
+the daemon is started with whatever the client had, so a test home and a real
+one never meet.
 """
 
 import os
@@ -22,17 +24,13 @@ def session_file(session_id: str) -> Path:
 
 
 def meta_file(session_id: str) -> Path:
-    """Which native session each provider holds for this omni session, and how far it is synced."""
+    """Which native session each provider holds, and how far it is synced."""
     return sessions() / f"{session_id}.meta.json"
 
 
-def lock_file(session_id: str) -> Path:
-    return sessions() / f"{session_id}.lock"
-
-
-def jail(session_id: str, provider: str) -> Path:
-    """A fake provider home, used to strip a CLI of everything it would otherwise auto-load."""
-    return home() / "jails" / session_id / provider
+def socket() -> Path:
+    """Where the daemon listens. One per ``OMNI_HOME``."""
+    return home() / "omnid.sock"
 
 
 def cache() -> Path:

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silicon-omni"
-version = "0.3.0"
-description = "One Python interface for Claude Code, Codex and Antigravity — subscription-powered, session-portable."
+version = "0.4.0"
+description = "One Python interface for Claude Code, Codex and Antigravity, backed by a persistent Rust daemon."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -38,6 +38,20 @@ dev = ["pytest>=8", "pytest-timeout>=2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["omni"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/Cargo.lock",
+  "/Cargo.toml",
+  "/LICENSE",
+  "/README.md",
+  "/crates",
+  "/hatch_build.py",
+  "/omni",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

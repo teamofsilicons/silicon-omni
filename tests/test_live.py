@@ -14,9 +14,7 @@ import time
 import pytest
 
 from omni import Inference
-from omni.chat import Chat
 from omni.events import Event
-from omni.session import Store
 from omni.shared import paths
 
 pytestmark = pytest.mark.live
@@ -45,8 +43,8 @@ def talk(session_id, providers, level=CHEAPEST):
     came after it. Asserting over the whole file passes exactly once, on a
     clean machine, and has told you nothing since.
     """
-    chat = Chat(session_id, providers)
-    chat.from_here = chat.store.seq + 1
+    chat = Inference.load_or_create_session(session_id, providers)
+    chat.from_here = max((event.seq for event in chat.history()), default=-1) + 1
     chat.cwd(str(paths.ensure(paths.home() / "cwd" / session_id)))
     chat.intelligence(level)
     chat.disable_subagents()
@@ -56,7 +54,7 @@ def talk(session_id, providers, level=CHEAPEST):
 
 def this_run(chat):
     """Only the events this run appended, whatever the session already held."""
-    return Store(chat.session_id).events(since=chat.from_here)
+    return chat.history(since=chat.from_here)
 
 
 def said(chat):
@@ -103,12 +101,13 @@ def test_a_conversation_survives_moving_between_providers():
         pytest.skip("needs two providers to switch between")
     first, second = have[0], have[1]
     chat = talk("live-switch", [first, second])
+    dial = Inference.dial([first, second])
 
     def to(name):
         for level in range(11):
-            if chat.rung()["provider"] == name:
+            if dial[str(level)]["provider"] == name:
+                chat.intelligence(level)
                 return
-            chat.intelligence(level)
         pytest.skip(f"no rung resolves to {name}")
 
     try:

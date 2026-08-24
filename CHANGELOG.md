@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0
+
+**The conversation moved into a Rust daemon.** `omnid` now owns provider processes,
+turn boundaries, history, switching, account probes, and the intelligence cache. The
+Python package is a thin Unix-socket client and starts the daemon automatically on first
+use. The public `Inference`, `Chat`, and `Event` API remains the Python entry point.
+
+**Sessions survive their client.** Detaching or exiting leaves the provider warm for a
+15-minute grace period. Reopening the same id reconnects to the live conversation rather
+than launching a second provider and rebuilding its context.
+
+**Several clients may attach to one session.** Each receives the same ordered events,
+and any may send. A client can replay from a sequence number or request only future
+events. `SessionBusy` remains importable for compatibility but is no longer raised;
+`stop()` ends the shared session, while `detach()` only removes that client.
+
+**Provider processes stay hot across switches where their protocols allow it.** Codex
+threads share a warm app server and catch up with injected history. Antigravity carries
+missed history into its next message. Claude is restarted only when it cannot be caught
+up in place. Model and effort changes still re-tune without a restart when supported.
+
+**The test provider crosses the real transport.** Python tests drive the shipped Rust
+double through the same daemon and socket used by live providers. Rust tests cover the
+conductor and captured provider protocols directly.
+
 ## 0.3.0
 
 **One test provider, not two.** `omni.providers.test` absorbs everything the private

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/omni-core", "crates/omni-daemon", "crates/omni-client"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/teamofsilicons/silicon-omni"
+homepage = "https://omni.teamofsilicons.com"
+
+[workspace.dependencies]
+omni-core = { path = "crates/omni-core", version = "0.4.0" }
+omni-client = { path = "crates/omni-client", version = "0.4.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

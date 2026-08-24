@@ -1,10 +1,25 @@
-We're making silicon omni. this is a unified python package to communicate with claude code, codex or gemini models powered via subscriptions.
+We're making silicon omni. this is a python, rust, cli client connecting over a rust binary deamon to communicate with claude code, codex or gemini models powered via subscriptions.
 
 we'll use `claude -p` for claude code with json streaming
 we'll use `chatgpt app server` for connecting with openai models.
 we'll use `agy` for google's antigravity.
 
-at the end, this will be exposed as a simple python interface to access any of these inference providers.
+at the end, this will be exposed as a simple interface to access any of these inference providers.
+
+
+
+
+ARCHITECTURE:
+A rust based deamon is setup and runs on the system keeping claude, codex and agy hot for fast responses. Everything happens on this layer.
+Keeping the inference providers hot is imp because it makes omni significantly faster.
+A client side is established so that other interfaces can connect to it.
+Events and Logs are streamed over Unix Sockets.
+then we'll have a python package, a rust package, and a cli each running by connecting to the rust based deamon running.
+even the rust client connects via the client to the deamon. its to be treated the same as python and cli.
+
+
+
+
 
 ```python
 from omni import Inference, Event
@@ -127,6 +142,8 @@ eg. if i run `cd ~/Downloads/ && python ~/Documents/abc.py`, and say a claude se
 
 when its started and omni session meta file has written about this dir as the starting point for this session. all providers triggered within a given omni session will be tied to this dir.
 
+if the cwd is changed mid omni-session, then we can simply port the current running provider session into this new dir and run the command.
+
 
 
 
@@ -187,6 +204,8 @@ Preserve, never lose.
 Omni owns the history but is read from only on switch. Use the native continue/resume when using not switching providers. model-switch is easily possible even when using a provider.
 Omni only observes the tools. Dont sit and define new ones to the providers to use.
 
+enable_subagents() / enable_mcp() to turn subagent and mcp back on.
+
 running any of the following commands anytime again will overwrite them. this is how intelligence is changed. this is how a new session is created. this is how inference providers are changed. these things can happen after the current running tool/task/turn is completed.
 ```python
 chat = Inference.load_or_create_session("session_id")
@@ -195,9 +214,7 @@ chat.inteligence(7) # 0-10 fetched from omni.teamofsilicons.com for the given se
 chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either one
 ```
 
-2 chat sessions can not have the same session id. a new one cannot be opened before the currently running one is closed. if nothing is attached to a session id, it should be automatically closed. this should not be possible for a chat to open a session id, and then die.
-
- enable_subagents() / enable_mcp() to turn them back on.
+every session allows multiple connects for both reading events & logs, and write/send.
 
 
 
@@ -267,7 +284,7 @@ create a shared dir for shared code.
 keep the code to a minimum. if it can be done in less, lets do it in less.
 we are following a event/callback driven code style.
 this project will be open sourced, so make sure it can receive contributors. write good documentation and structure the code for understandability.
-omni will be published as a python package.
+omni will be published as a python package, rust package, and a cli.
 follow a sync approach when its for simple tasks, event/callback driven > async for complex. async otherwise.
 write test cases, mention what you're testing a test-group, and then at the end, give results.
 all tools you need are installed natively and feel free to install any package.

@@ -25,7 +25,11 @@ from omni.shared import paths  # noqa: E402
 PREFIX = "live-"
 
 #: Everywhere under the home that gets named after a session.
-FOLDERS = ("sessions", "jails", "cwd")
+#:
+#: Not ``jails``: since 0.4 there is one jail per provider rather than one per
+#: session, because a shared jail is what lets a single warm codex app-server
+#: serve every session at once. Nothing in it is named after a run.
+FOLDERS = ("sessions", "cwd")
 
 
 def leavings(prefix: str) -> list[Path]:
@@ -52,6 +56,34 @@ def dial_entry() -> tuple[Path, dict] | None:
     return (cache, blob) if TEST_PROVIDER in blob else None
 
 
+def close_first(prefix: str, dry_run: bool) -> list[str]:
+    """Ask the daemon to let go of these sessions before their files go.
+
+    The daemon keeps a session — and its provider — hot after the test that made
+    it has finished. Deleting the log out from under a live conversation would
+    be a good way to produce a very confusing bug report.
+    """
+    from omni import Inference
+    from omni.client import DaemonError, call
+    from omni.client import daemon as control
+
+    if not control.listening(paths.socket()):
+        return []  # no daemon running is the tidiest state of all
+    try:
+        held = [row["snapshot"]["session"] for row in Inference.sessions()]
+    except DaemonError:
+        return []
+    mine = [name for name in held if name.startswith(prefix)]
+    for name in mine:
+        print(f"  {'would close' if dry_run else 'closing'} live session {name!r}")
+        if not dry_run:
+            try:
+                call("stop", session=name)
+            except DaemonError as exc:
+                print(f"    (the daemon would not close it: {exc})")
+    return mine
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--prefix", default=PREFIX, help=f"session ids to remove (default: {PREFIX!r})")
@@ -65,6 +97,7 @@ def main() -> int:
 
     home = paths.home().resolve()
     print(f"omni home: {home}")
+    closed = close_first(args.prefix, args.dry_run)
     targets = leavings(args.prefix)
     for path in targets:
         # Belt and braces. Resolved, because an unresolved ``a/../../b`` still
@@ -89,7 +122,7 @@ def main() -> int:
             blob.pop(TEST_PROVIDER)
             cache.write_text(json.dumps(blob))
 
-    if not targets and not pinned:
+    if not targets and not pinned and not closed:
         print("  nothing to clean")
     return 0
 
