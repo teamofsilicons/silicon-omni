@@ -50,7 +50,14 @@ pub fn windows(lines: &str) -> Value {
         else {
             continue;
         };
-        let remaining = bucket["remaining_fraction"].as_f64().unwrap_or(1.0);
+        let Some(remaining) = bucket["remaining_fraction"]
+            .as_f64()
+            .filter(|remaining| remaining.is_finite())
+        else {
+            // Missing quota is unknown quota, not a completely unused window.
+            continue;
+        };
+        let remaining = remaining.clamp(0.0, 1.0);
         let used = ((1.0 - remaining) * 10_000.0).round() / 10_000.0;
         let worse = out[name]["used"].as_f64().is_none_or(|seen| used > seen);
         if worse {
@@ -140,5 +147,29 @@ mod tests {
     fn nothing_parseable_is_nothing_known_rather_than_nothing_used() {
         let seen = windows("agy: command not found");
         assert!(seen["5h"]["used"].is_null() && seen["7d"]["used"].is_null());
+    }
+
+    #[test]
+    fn missing_or_non_numeric_remaining_is_unknown_not_zero_used() {
+        let seen = windows(&usage(json!([{
+            "buckets": [
+                {"window": "5h"},
+                {"window": "weekly", "remaining_fraction": "0.5"}
+            ]
+        }])));
+        assert!(seen["5h"]["used"].is_null());
+        assert!(seen["7d"]["used"].is_null());
+    }
+
+    #[test]
+    fn reported_fractions_are_clamped_to_a_real_window() {
+        let seen = windows(&usage(json!([{
+            "buckets": [
+                {"window": "5h", "remaining_fraction": 1.4},
+                {"window": "weekly", "remaining_fraction": -0.2}
+            ]
+        }])));
+        assert_eq!(seen["5h"]["used"], 0.0);
+        assert_eq!(seen["7d"]["used"], 1.0);
     }
 }

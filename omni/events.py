@@ -1,9 +1,10 @@
 """The event vocabulary.
 
-Everything omni has to say arrives as an :class:`Event`. The same objects are
-handed to ``@chat.on_event`` handlers, to ``@chat.logs`` handlers, and appended
-to the session file — so the session file *is* the event log, and there is only
-ever one schema to learn.
+Everything omni has to say arrives as an :class:`Event`. Daemon events are handed
+to ``@chat.on_event`` and ``@chat.logs`` handlers and appended to the session
+file — so the session file *is* the event log, and there is only one schema to
+learn. A local ``handler`` error additionally reaches this Python client's log
+handlers; it has no sequence number because it is not a daemon record.
 
 The daemon defines these; this is the Python view of the same thing, so an
 event read off a session file and an event handed to a callback are identical.
@@ -52,17 +53,23 @@ class Event:
                         ``stderr`` for CLI chatter, ``omni`` when the engine
                         itself failed, ``handler`` when your callback raised
     ``SWITCH_PROVIDER`` ``provider`` (the new one), ``extra['from']``
-    ``NEW_SESSION``     ``session``, ``extra['native']``
+    ``NEW_SESSION``     ``provider``, ``extra['native']``
     ``CONFIG``          ``text`` — what changed, ``extra`` — the new value
     ==================  ====================================================
 
-    Three fields are on every event whatever its type. ``session`` is the omni
-    session it belongs to, ``at`` is when it happened, and ``seq`` is its
-    position in that session's log — a number that only goes up, and never
-    repeats, across every provider the conversation has passed through.
+    Every serialized event carries ``v``, ``type``, and ``at``. ``v`` is the
+    on-disk schema version (currently 1); a pre-versioned record defaults to 1
+    when read. Events committed by the daemon also carry ``session`` and
+    ``seq``. The latter is a position in that session's log that only goes up
+    and never repeats across every provider the conversation has visited.
 
     ``seq`` is how omni knows what a provider still has to be told, and how a
-    client that reconnects asks for exactly what it missed.
+    client that reconnects asks for exactly what it missed. ``turn`` starts at
+    zero on the first ``START`` and groups the events belonging to that omni
+    turn; bookkeeping before it is omitted. ``native`` is an optional map of
+    provider-reported identities — conversation, message, turn, item, tool, or
+    step IDs — retained for exact fidelity but not translated as portable
+    history.
     """
 
     # ---- types ----
@@ -76,9 +83,11 @@ class Event:
     SWITCH_PROVIDER = "switch_provider"
     NEW_SESSION = "new_session"
     CONFIG = "config"
+    SEED = "seed"
 
     # ---- payload ----
     type: str
+    v: int = 1
     session: str = ""
     provider: str = ""
     model: str = ""
@@ -92,6 +101,8 @@ class Event:
     error: str = ""
     at: str = ""
     seq: int = -1
+    turn: int = -1
+    native: dict = field(default_factory=dict)
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -109,8 +120,8 @@ class Event:
         }
 
 
-#: Written even when unset: ``type`` identifies the record, ``at`` orders it.
-ALWAYS = ("type", "at")
+#: Always written: ``v`` selects the schema, ``type`` identifies, ``at`` orders.
+ALWAYS = ("v", "type", "at")
 
 #: Every field's default, materialised once so ``to_dict`` stays cheap.
 DEFAULTS = vars(Event(type=""))

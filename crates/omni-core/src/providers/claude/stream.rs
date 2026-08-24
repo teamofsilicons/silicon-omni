@@ -7,17 +7,20 @@
 //! Thinking blocks arrive with a signature and are encrypted; omni notes that
 //! the model thought and throws the content away.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::events::{Event, classify, kind};
+use crate::providers::base;
 
 const THINKING_BLOCKS: &[&str] = &["thinking", "redacted_thinking"];
 
 #[derive(Default)]
 pub struct Stream {
     tools: BTreeMap<String, String>,
+    expected: VecDeque<String>,
+    turn_open: bool,
     pub session_id: String,
     pub model: String,
 }
@@ -31,7 +34,23 @@ impl Stream {
     }
 
     fn event(&self, kind: &str) -> Event {
-        Event::new(kind).from(super::NAME).about(&self.model)
+        let mut event = Event::new(kind).from(super::NAME).about(&self.model);
+        if !self.session_id.is_empty() {
+            event
+                .native
+                .insert("session_id".into(), json!(self.session_id));
+        }
+        event
+    }
+
+    /// Register a line before it reaches the pipe. The runner holds the stream
+    /// lock across the write, so a very fast replay echo cannot beat this.
+    pub fn expect_user(&mut self, text: &str) {
+        self.expected.push_back(text.to_string());
+    }
+
+    pub fn forget_last_user(&mut self) {
+        self.expected.pop_back();
     }
 
     pub fn feed(&mut self, line: &str) -> Vec<Event> {
@@ -41,6 +60,7 @@ impl Stream {
         match data.get("type").and_then(Value::as_str) {
             Some("system") => self.system(&data),
             Some("assistant") => self.assistant(&data),
+            Some("user") if replay_echo(&data) => self.replayed(&data),
             Some("user") => self.results(&data),
             Some("rate_limit_event") => self.rate_limited(&data),
             Some("result") => self.finished(&data),
@@ -63,6 +83,7 @@ impl Stream {
 
     fn assistant(&mut self, data: &Value) -> Vec<Event> {
         let message = &data["message"];
+        let message_id = message.get("id").and_then(Value::as_str).unwrap_or("");
         if let Some(model) = message.get("model").and_then(Value::as_str) {
             self.model = model.to_string();
         }
@@ -94,18 +115,27 @@ impl Stream {
                 data.get("error").and_then(Value::as_str).unwrap_or(""),
                 message.get("error").and_then(Value::as_str).unwrap_or("")
             );
-            return vec![
-                Event::failure(classify(&classification), error)
-                    .from(super::NAME)
-                    .about(&self.model),
-            ];
+            let mut event = Event::failure(classify(&classification), error)
+                .from(super::NAME)
+                .about(&self.model);
+            if !message_id.is_empty() {
+                event.native.insert("message_id".into(), json!(message_id));
+            }
+            if !self.session_id.is_empty() {
+                event
+                    .native
+                    .insert("session_id".into(), json!(self.session_id));
+            }
+            return vec![event];
         }
         let mut events = Vec::new();
         for block in content {
             let block_kind = block.get("type").and_then(Value::as_str).unwrap_or("");
             let text = block.get("text").and_then(Value::as_str).unwrap_or("");
-            if block_kind == "text" && !text.is_empty() {
-                events.push(self.event(kind::TEXT).saying(text));
+            if block_kind == "text" {
+                if !text.is_empty() {
+                    events.push(self.event(kind::TEXT).saying(text));
+                }
             } else if THINKING_BLOCKS.contains(&block_kind) {
                 events.push(self.event(kind::THINKING));
             } else if block_kind == "tool_use" {
@@ -124,10 +154,58 @@ impl Stream {
                 event.tool = name;
                 event.id = id;
                 event.args = block["input"].as_object().cloned().unwrap_or_default();
+                if !event.id.is_empty() {
+                    event.native.insert("tool_use_id".into(), json!(event.id));
+                }
                 events.push(event);
+            } else {
+                // Claude can add content block types without changing the
+                // stream envelope. Keep their structured payload in the one
+                // protocol-compatible place a portable assistant message has:
+                // Event.text. Known encrypted thinking stays excluded above.
+                let text = flatten_content(Some(block));
+                if !text.is_empty() {
+                    events.push(self.event(kind::TEXT).saying(text));
+                }
+            }
+        }
+        if !message_id.is_empty() {
+            for event in &mut events {
+                event.native.insert("message_id".into(), json!(message_id));
             }
         }
         events
+    }
+
+    /// `--replay-user-messages` is Claude's delivery acknowledgement. Only an
+    /// echo matching the FIFO of lines omni actually wrote can advance native
+    /// turn state; control-channel chatter also arrives as replayed user text.
+    fn replayed(&mut self, data: &Value) -> Vec<Event> {
+        let text = flatten_content(data["message"].get("content"));
+        if self.expected.front().map(String::as_str) != Some(text.as_str()) {
+            return Vec::new();
+        }
+        self.expected.pop_front();
+        let opening = if self.turn_open {
+            kind::INJECTED
+        } else {
+            kind::START
+        };
+        self.turn_open = true;
+        let mut event = base::confirmed(&text, opening)
+            .from(super::NAME)
+            .about(&self.model);
+        for key in ["session_id", "uuid", "timestamp"] {
+            if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
+                event.native.insert(key.into(), value.clone());
+            }
+        }
+        if !self.session_id.is_empty() && !event.native.contains_key("session_id") {
+            event
+                .native
+                .insert("session_id".into(), json!(self.session_id));
+        }
+        vec![event]
     }
 
     /// A `user` line from Claude is a tool result coming back.
@@ -148,6 +226,9 @@ impl Stream {
             let mut event = self.event(kind::TOOL_RESULT);
             event.tool = self.tools.remove(&call_id).unwrap_or_default();
             event.id = call_id;
+            if !event.id.is_empty() {
+                event.native.insert("tool_use_id".into(), json!(event.id));
+            }
             event.result = Value::String(flatten_content(block.get("content")));
             event.ok = !block
                 .get("is_error")
@@ -216,8 +297,29 @@ impl Stream {
                     data.get("num_turns").cloned().unwrap_or(Value::Null),
                 ),
         );
+        self.turn_open = false;
         events
     }
+}
+
+fn replay_echo(data: &Value) -> bool {
+    if !data
+        .get("isReplay")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let content = &data["message"]["content"];
+    let text = flatten_content(Some(content));
+    if text.starts_with("<local-command-stdout>") || text == "[Request interrupted by user]" {
+        return false;
+    }
+    !content.as_array().is_some_and(|blocks| {
+        blocks
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+    })
 }
 
 fn api_error_message(data: &Value, message: &Value) -> bool {
@@ -235,19 +337,31 @@ pub fn flatten_content(content: Option<&Value>) -> String {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Array(blocks)) => blocks
             .iter()
-            .map(|block| match block {
-                Value::Object(map) => map
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                other => other.to_string(),
-            })
+            .map(flatten_block)
+            .filter(|block| !block.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
             .trim()
             .to_string(),
-        Some(other) => other.to_string(),
+        Some(other) => flatten_block(other),
+    }
+}
+
+fn flatten_block(block: &Value) -> String {
+    match block {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        Value::Object(map)
+            if map.get("type").and_then(Value::as_str) == Some("text")
+                || (map.len() == 1 && map.contains_key("text")) =>
+        {
+            map.get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        }
+        Value::Object(_) => block.to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -361,6 +475,96 @@ mod tests {
     }
 
     #[test]
+    fn replay_echoes_confirm_expected_users_in_native_turn_order() {
+        let mut stream = Stream::default();
+        feed(
+            &mut stream,
+            json!({"type": "system", "subtype": "init", "session_id": "s1", "model": "m"}),
+        );
+
+        // Control-channel chatter is also labelled as replayed user text. It
+        // neither confirms our line nor opens a native turn.
+        stream.expect_user("one");
+        assert!(
+            feed(
+                &mut stream,
+                json!({
+                    "type": "user", "isReplay": true,
+                    "message": {"content": "<local-command-stdout>Set model</local-command-stdout>"}
+                })
+            )
+            .is_empty()
+        );
+
+        let first = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true, "session_id": "s1",
+                "uuid": "u1", "timestamp": "2026-08-24T00:00:00Z",
+                "message": {"content": [{"type": "text", "text": "one"}]}
+            }),
+        );
+        assert_eq!(first.len(), 1);
+        assert!(first[0].is(base::CONFIRMED));
+        assert_eq!(first[0].extra[base::CONFIRMED_AS], kind::START);
+        assert_eq!(first[0].native["session_id"], "s1");
+        assert_eq!(first[0].native["uuid"], "u1");
+
+        stream.expect_user("two");
+        let injected = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true,
+                "message": {"content": "two"}
+            }),
+        );
+        assert_eq!(injected[0].extra[base::CONFIRMED_AS], kind::INJECTED);
+
+        feed(
+            &mut stream,
+            json!({"type": "result", "subtype": "success", "is_error": false}),
+        );
+        stream.expect_user("three");
+        let next = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true,
+                "message": {"content": "three"}
+            }),
+        );
+        assert_eq!(next[0].extra[base::CONFIRMED_AS], kind::START);
+    }
+
+    #[test]
+    fn an_unexpected_replay_cannot_ack_or_reorder_the_fifo() {
+        let mut stream = Stream::default();
+        stream.expect_user("same");
+        stream.expect_user("same");
+        assert!(
+            feed(
+                &mut stream,
+                json!({"type": "user", "isReplay": true, "message": {"content": "other"}})
+            )
+            .is_empty()
+        );
+        for opening in [kind::START, kind::INJECTED] {
+            let events = feed(
+                &mut stream,
+                json!({"type": "user", "isReplay": true, "message": {"content": "same"}}),
+            );
+            assert_eq!(events[0].extra[base::CONFIRMED_AS], opening);
+        }
+        assert!(
+            feed(
+                &mut stream,
+                json!({"type": "user", "isReplay": true, "message": {"content": "same"}}),
+            )
+            .is_empty(),
+            "a third duplicate had no corresponding pipe write"
+        );
+    }
+
+    #[test]
     fn a_failed_tool_says_so() {
         let mut stream = Stream::default();
         let events = feed(
@@ -420,5 +624,44 @@ mod tests {
             "a\nb"
         );
         assert_eq!(flatten_content(None), "");
+    }
+
+    #[test]
+    fn structured_tool_output_is_serialized_instead_of_disappearing() {
+        let structured = json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "abc"}
+        });
+        let flattened = flatten_content(Some(&json!([
+            {"type": "text", "text": "before"},
+            structured.clone()
+        ])));
+        let (before, encoded) = flattened.split_once('\n').unwrap();
+        assert_eq!(before, "before");
+        assert_eq!(serde_json::from_str::<Value>(encoded).unwrap(), structured);
+    }
+
+    #[test]
+    fn an_unknown_assistant_block_survives_as_textual_json() {
+        let block = json!({
+            "type": "server_tool_result",
+            "status": "complete",
+            "text": "a human-readable field must not erase the rest",
+            "content": [{"title": "source", "url": "https://example.test"}]
+        });
+        let mut stream = Stream::default();
+        let events = feed(
+            &mut stream,
+            json!({"type": "assistant", "message": {"content": [block.clone()]}}),
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is(kind::TEXT));
+        assert_eq!(
+            serde_json::from_str::<Value>(&events[0].text).unwrap(),
+            block
+        );
+        let round_trip: Event = serde_json::from_value(events[0].to_value()).unwrap();
+        assert_eq!(round_trip.text, events[0].text);
     }
 }

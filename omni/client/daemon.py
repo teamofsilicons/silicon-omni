@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -85,16 +86,32 @@ def start(timeout: float = STARTUP) -> Path:
             "  or point OMNI_DAEMON at the binary."
         )
     paths.home().mkdir(parents=True, exist_ok=True)
-    log = open(paths.home() / "omnid.log", "a", encoding="utf-8")
-    subprocess.Popen(
-        [where],
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=log,
-        # Its own session, so the daemon outlives the shell that started it.
-        start_new_session=True,
-        env=dict(os.environ, OMNI_HOME=str(paths.home())),
-    )
+    os.chmod(paths.home(), 0o700)
+    # The daemon normally mirrors its foreground status lines into this file.
+    # Here stdout/stderr already *are* the file, so tell it there is one writer
+    # or every status line appears twice.
+    with open(paths.home() / "omnid.log", "a", encoding="utf-8") as log:
+        os.chmod(log.name, 0o600)
+        process = subprocess.Popen(
+            [where],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            # Its own session, so the daemon outlives the shell that started it.
+            start_new_session=True,
+            env=dict(
+                os.environ,
+                OMNI_HOME=str(paths.home()),
+                OMNI_STDIO_LOGGED="1",
+            ),
+        )
+    # A simultaneous starter may lose the daemon lock and exit immediately.
+    # Reap either outcome without tying daemon lifetime to this Python process.
+    threading.Thread(
+        target=process.wait,
+        daemon=True,
+        name="omni:daemon-reaper",
+    ).start()
     deadline = time.time() + timeout
     while time.time() < deadline:
         if listening(path):
@@ -116,7 +133,8 @@ def stop() -> bool:
         return False
     finally:
         Link.forget()
-    for _ in range(100):
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
         if not listening(paths.socket()):
             return True
         time.sleep(0.05)

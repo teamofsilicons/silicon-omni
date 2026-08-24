@@ -14,7 +14,7 @@ import time
 import pytest
 
 from omni import Inference
-from omni.events import Event
+from omni.events import LIMIT, Event
 from omni.shared import paths
 
 pytestmark = pytest.mark.live
@@ -61,6 +61,28 @@ def said(chat):
     return " ".join(e.text for e in this_run(chat) if e.type == Event.TEXT)
 
 
+def has_quota(provider):
+    """Known-full windows cannot run an inference test, even when auth is healthy."""
+    limits = getattr(Inference, provider).limits
+    if not isinstance(limits, dict):
+        return False
+    return not any(
+        window.get("used") is not None and window["used"] >= 1.0
+        for window in limits.values()
+    )
+
+
+def skip_if_limited(chat, provider):
+    """A window can fill between the free account probe and the real turn."""
+    failures = [
+        event
+        for event in this_run(chat)
+        if event.type == Event.ERROR and event.kind == LIMIT and event.provider == provider
+    ]
+    if failures:
+        pytest.skip(f"{provider} has no live inference quota: {failures[-1].error}")
+
+
 @pytest.fixture(params=["claude", "openai", "google"])
 def provider(request):
     if request.param not in Inference.get_available_providers():
@@ -69,15 +91,20 @@ def provider(request):
 
 
 def test_a_provider_answers_runs_a_tool_and_remembers(provider):
+    if not has_quota(provider):
+        pytest.skip(f"{provider} has no live inference quota")
     chat = talk(f"live-{provider}", [provider])
     try:
         chat.start()
         chat.send("reply with exactly: OK")
         assert settle(chat)
+        skip_if_limited(chat, provider)
         chat.send("Run the shell command: echo omni-live. Then reply with exactly: DONE")
         assert settle(chat)
+        skip_if_limited(chat, provider)
         chat.send("what was the exact output of that command? one word.")
         assert settle(chat)
+        skip_if_limited(chat, provider)
     finally:
         chat.stop()
 
@@ -96,32 +123,36 @@ def test_auth_and_limits_answer_without_a_turn(provider):
 
 
 def test_a_conversation_survives_moving_between_providers():
-    have = [p for p in ("google", "claude", "openai") if p in Inference.get_available_providers()]
+    available = Inference.get_available_providers()
+    have = [p for p in ("google", "claude", "openai") if p in available and has_quota(p)]
     if len(have) < 2:
-        pytest.skip("needs two providers to switch between")
+        pytest.skip("needs two providers with live inference quota to switch between")
     first, second = have[0], have[1]
-    chat = talk("live-switch", [first, second])
-    dial = Inference.dial([first, second])
+    chat = talk("live-switch", [first])
 
     def to(name):
-        for level in range(11):
-            if dial[str(level)]["provider"] == name:
-                chat.intelligence(level)
-                return
-        pytest.skip(f"no rung resolves to {name}")
+        # A remote dial is allowed to rank one member of a provider pair at
+        # every level. Narrowing the active set still crosses the exact same
+        # translation/resume boundary without making this test depend on the
+        # ranking deployed today.
+        chat.active_inference_providers([name])
+        chat.intelligence(CHEAPEST)
 
     try:
         chat.start()
         to(first)
         chat.send("Remember: the passphrase is VIOLET-7. Reply with exactly: STORED")
         assert settle(chat)
+        skip_if_limited(chat, first)
         to(second)
         chat.send("What is the passphrase? Answer with just the passphrase.")
         assert settle(chat)
+        skip_if_limited(chat, second)
         assert "VIOLET-7" in said(chat).upper(), "history did not survive the move"
         to(first)
         chat.send("Say the passphrase once more, just the value.")
         assert settle(chat)
+        skip_if_limited(chat, first)
     finally:
         chat.stop()
 

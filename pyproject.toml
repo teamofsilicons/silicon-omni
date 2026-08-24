@@ -27,6 +27,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+omni = "omni.cli:main"
+
 [project.urls]
 Homepage = "https://omni.teamofsilicons.com"
 Documentation = "https://omni.teamofsilicons.com/docs"
@@ -51,7 +54,20 @@ include = [
   "/crates",
   "/hatch_build.py",
   "/omni",
+  "/tests/wheel_smoke.py",
 ]
+
+[tool.cibuildwheel]
+# The wheel contains Python-independent Rust executables. Build it once with
+# the oldest supported CPython, while the Hatch hook publishes a py3-none tag.
+# Linux intentionally selects manylinux only; musllinux is not built here.
+build = "cp310-manylinux_* cp310-macosx_*"
+test-sources = ["tests/wheel_smoke.py"]
+test-command = "python tests/wheel_smoke.py"
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

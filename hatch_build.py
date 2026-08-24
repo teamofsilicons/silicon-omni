@@ -1,4 +1,4 @@
-"""Build the native daemon and place it inside platform wheels."""
+"""Build the native daemon and terminal client for platform wheels."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
 class CustomBuildHook(BuildHookInterface):
-    """Compile the Rust daemon immediately before Hatch assembles a wheel."""
+    """Compile the Rust executables immediately before Hatch assembles a wheel."""
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         if version != "standard":
@@ -22,12 +22,14 @@ class CustomBuildHook(BuildHookInterface):
         if os.name == "nt":
             raise RuntimeError("silicon-omni wheels currently support macOS and Linux only")
 
-        binary = self._build_daemon()
-        build_data["force_include"][str(binary)] = "omni/bin/omnid"
+        binaries = self._build_binaries()
+        force_include = build_data.setdefault("force_include", {})
+        for name, binary in binaries.items():
+            force_include[str(binary)] = f"omni/bin/{name}"
         build_data["pure_python"] = False
         build_data["tag"] = self._wheel_tag()
 
-    def _build_daemon(self) -> Path:
+    def _build_binaries(self) -> dict[str, Path]:
         cargo = shutil.which("cargo")
         if cargo is None:
             raise RuntimeError(
@@ -42,8 +44,9 @@ class CustomBuildHook(BuildHookInterface):
             "--locked",
             "--package",
             "omni-daemon",
-            "--bin",
-            "omnid",
+            "--package",
+            "silicon-omni-cli",
+            "--bins",
             "--message-format=json-render-diagnostics",
         ]
         result = subprocess.run(
@@ -54,7 +57,8 @@ class CustomBuildHook(BuildHookInterface):
             check=False,
         )
 
-        binary: Path | None = None
+        expected = {"omni", "omnid"}
+        binaries: dict[str, Path] = {}
         diagnostics: list[str] = []
         for line in result.stdout.splitlines():
             try:
@@ -65,8 +69,9 @@ class CustomBuildHook(BuildHookInterface):
             if message.get("reason") == "compiler-artifact":
                 target = message.get("target", {})
                 executable = message.get("executable")
-                if target.get("name") == "omnid" and executable:
-                    binary = Path(executable).resolve()
+                name = target.get("name")
+                if name in expected and executable and "bin" in target.get("kind", []):
+                    binaries[name] = Path(executable).resolve()
             elif message.get("reason") == "compiler-message":
                 rendered = message.get("message", {}).get("rendered")
                 if rendered:
@@ -75,12 +80,22 @@ class CustomBuildHook(BuildHookInterface):
         if diagnostics:
             sys.stderr.write("".join(diagnostics))
         if result.returncode:
-            raise RuntimeError(f"Cargo failed to build omnid (exit status {result.returncode})")
-        if binary is None or not binary.is_file():
-            raise RuntimeError("Cargo completed without reporting the built omnid executable")
-        if not os.access(binary, os.X_OK):
-            raise RuntimeError(f"Cargo produced a non-executable omnid binary: {binary}")
-        return binary
+            raise RuntimeError(
+                f"Cargo failed to build omni and omnid (exit status {result.returncode})"
+            )
+
+        missing = expected.difference(binaries)
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise RuntimeError(
+                f"Cargo completed without reporting the built executable(s): {names}"
+            )
+        for name, binary in binaries.items():
+            if not binary.is_file():
+                raise RuntimeError(f"Cargo reported a missing {name} executable: {binary}")
+            if not os.access(binary, os.X_OK):
+                raise RuntimeError(f"Cargo produced a non-executable {name} binary: {binary}")
+        return binaries
 
     @staticmethod
     def _wheel_tag() -> str:

@@ -7,6 +7,21 @@ turn boundaries, history, switching, account probes, and the intelligence cache.
 Python package is a thin Unix-socket client and starts the daemon automatically on first
 use. The public `Inference`, `Chat`, and `Event` API remains the Python entry point.
 
+**Rust and terminal clients use that same daemon.** The synchronous `omni-client`
+crate multiplexes concurrent calls and session event subscriptions over one socket.
+Independent replies may complete out of order while requests for one session retain
+FIFO order. The new `omni` command covers streaming chat, attach/replay, sessions,
+settings, providers, the intelligence dial, accounts, raw protocol calls, and daemon
+lifecycle. Platform Python wheels contain both `omni` and `omnid`; the Cargo packages
+remain independently installable. The terminal crate is published as
+`silicon-omni-cli` because the unrelated `omni-cli` name is already occupied.
+
+**Native distributions are exercised as distributions.** CI builds audited
+manylinux 2.28 wheels for x86_64/aarch64 and macOS wheels for Intel/Apple silicon,
+using the workspace's Rust 1.85 minimum. Each platform produces one `py3-none` wheel,
+installs it outside the source tree, and smoke-tests both `omni` and the bundled
+`omnid`; the sdist is built, checked, and inspected separately.
+
 **Sessions survive their client.** Detaching or exiting leaves the provider warm for a
 15-minute grace period. Reopening the same id reconnects to the live conversation rather
 than launching a second provider and rebuilding its context.
@@ -16,10 +31,61 @@ and any may send. A client can replay from a sequence number or request only fut
 events. `SessionBusy` remains importable for compatibility but is no longer raised;
 `stop()` ends the shared session, while `detach()` only removes that client.
 
+**Reconnect and lifecycle calls have explicit commit points.** Python generations
+isolate stale socket frames from a reopened chat without waiting for slow user
+callbacks, and replay cursors advance only for frames that generation accepted. Python
+and Rust clients mark `stop()` or `detach()` complete only after the daemon reply;
+refusal or timeout closes the uncertain link, surfaces the error, and leaves a failed
+stop reopenable for retry.
+
+**Daemon concurrency is bounded and shutdown is global.** Replay uses a finite socket
+outbox and disconnects a stalled reader without blocking a session. Request lines are
+capped at 16 MiB and 128 request tasks run at once; further socket reads provide
+backpressure. Shutdown closes admission and drains already accepted work across every
+client before cleanup. Session lifecycle gates serialize open/send/set/stop/reap, and
+cold reaping revalidates that an unobserved session is still idle before stopping it.
+
+**Session configuration is durable.** Active providers, intelligence, prompts,
+subagent/MCP isolation, auth-failover policy, and working directory live in metadata and
+survive cold reaping or daemon restart. A new session adopts the opening client's CWD;
+later clients cannot move it accidentally, while an explicit CWD setting still applies
+at the next turn boundary.
+
+**Events are versioned and retain native identity.** New records carry schema `v=1`,
+and old records without `v` load as version 1. `turn` groups cross-provider activity,
+while the optional `native` map keeps provider conversation, message, turn, item, tool,
+and step IDs without making them portable history. Private runner epochs are stripped
+before persistence; a public `extra.message_id` correlates durable send acceptance with
+provider delivery, and output from a replaced runner retains its origin turn with
+`extra.late=true` instead of acting on its successor.
+
+**The source of truth has a real durability boundary.** Session JSONL is data-synced
+before an event is published. A valid unterminated final record is preserved and an
+invalid partial tail is repaired before append, while complete-line corruption,
+invalid events, sequence gaps, and foreign session records are preserved and refuse
+the session instead of being skipped. Accepted sends first enter a transactionally
+rewritten metadata FIFO and are acknowledged only after it is durable; correlated
+`START`/`INJECTED` events make crash reconciliation exact. Explicit stop durably closes
+an open turn once, synthesizing an interrupted `END` only when the provider did not
+emit one. Omni-owned directories are private (`0700`); its socket, PID/log, JSONL, and
+metadata files are forced to `0600`, with new directory entries synced too.
+
 **Provider processes stay hot across switches where their protocols allow it.** Codex
 threads share a warm app server and catch up with injected history. Antigravity carries
 missed history into its next message. Claude is restarted only when it cannot be caught
 up in place. Model and effort changes still re-tune without a restart when supported.
+
+**Provider edge cases now follow the native protocols.** Claude uses only the exact
+replayed-user FIFO as delivery acknowledgement and preserves unknown structured output.
+Codex propagates shared app-server exits, retries incomplete skill isolation, persists a
+first login through its jail symlink, and cleanly reseeds a forgotten thread.
+Antigravity requires a reported conversation id, keeps replacement and appended prompts
+in order, treats a mid-turn message as the next native turn, and leaves missing quota as
+unknown rather than zero used. Failure classification now matches whole tokens and
+phrases instead of fragments inside unrelated words. Browser-login children expire and
+are reaped on shutdown. Provider/probe process groups have death-pipe guardians for
+abrupt daemon loss, process stop cannot hang on inherited pipes or call back afterward,
+and `SIGTERM`/`SIGINT` take the same graceful cleanup path as protocol shutdown.
 
 **The test provider crosses the real transport.** Python tests drive the shipped Rust
 double through the same daemon and socket used by live providers. Rust tests cover the

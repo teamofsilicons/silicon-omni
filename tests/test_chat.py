@@ -5,6 +5,9 @@ ordering, settings, switching and failover — driven through a real daemon over
 real socket.
 """
 
+import threading
+from pathlib import Path
+
 import pytest
 
 from conftest import in_turn, settled
@@ -77,6 +80,26 @@ def test_a_message_sent_mid_turn_lands_inside_it(one, name):
 
 
 # ------------------------------------------------------------- persistence
+
+def test_the_opening_python_process_cwd_pins_a_new_session(
+    name, tmp_path, monkeypatch
+):
+    double.install(name)
+    first_dir = tmp_path / "first-client"
+    later_dir = tmp_path / "later-client"
+    first_dir.mkdir()
+    later_dir.mkdir()
+
+    monkeypatch.chdir(first_dir)
+    first = Inference.load_or_create_session(name, [name]).start()
+    assert Path(first.refresh()["cwd"]).resolve() == first_dir.resolve()
+    first.stop()
+
+    monkeypatch.chdir(later_dir)
+    restored = Inference.load_or_create_session(name).start()
+    assert Path(restored.refresh()["cwd"]).resolve() == first_dir.resolve()
+    restored.stop()
+
 
 def test_the_session_outlives_the_object_that_opened_it(one, name):
     one.send("remember VIOLET-7")
@@ -267,3 +290,258 @@ def test_a_failed_start_can_be_detached_retried_and_stopped(monkeypatch, name):
     chat.detach()
     chat.stop()
     assert recovered.ops == ["open", "detach", "stop"]
+
+
+def test_lifecycle_calls_do_not_restart_a_dead_daemon(monkeypatch, name):
+    """Leaving a disconnected session is local cleanup, not a daemon launch."""
+
+    class DeadLink:
+        alive = False
+
+        def unlisten(self, session):
+            pass
+
+        def close(self):
+            pass
+
+    def unexpected_open(cls):
+        raise AssertionError("detach/stop must not start a daemon")
+
+    monkeypatch.setattr(Link, "open", classmethod(unexpected_open))
+
+    detached = Chat(name, [name])
+    detached.connection = DeadLink()
+    detached.opened = True
+    detached._started = True
+    detached.detach()
+
+    stopped = Chat(f"{name}-stop", [name])
+    stopped.connection = DeadLink()
+    stopped.opened = True
+    stopped._started = True
+    with pytest.raises(DaemonError, match="connection is gone"):
+        stopped.stop()
+    assert not stopped.finished and not stopped.opened
+    assert stopped.connection is None
+
+
+@pytest.mark.parametrize(
+    ("operation", "failure"),
+    [
+        ("stop", "stop was refused"),
+        ("stop", "stop got no answer in 1s"),
+        ("detach", "detach was refused"),
+        ("detach", "detach got no answer in 1s"),
+    ],
+)
+def test_lifecycle_rpc_failures_are_surfaced_and_reloadable(
+    monkeypatch, name, operation, failure
+):
+    class StubLink:
+        def __init__(self, failing=None):
+            self.alive = True
+            self.failing = failing
+            self.listener = None
+            self.ops = []
+            self.unlistened = []
+            self.closed = False
+
+        def listen(self, session, handler):
+            self.listener = handler
+
+        def unlisten(self, session):
+            self.unlistened.append(session)
+            self.listener = None
+
+        def call(self, op, **fields):
+            self.ops.append(op)
+            if op == operation and self.failing:
+                raise DaemonError(self.failing)
+            if op == "open":
+                return {
+                    "snapshot": {
+                        "session": name,
+                        "status": "waiting",
+                        "seq": -1,
+                        "queued": 0,
+                        "in_turn": False,
+                    }
+                }
+            return {}
+
+        def close(self):
+            self.closed = True
+            self.alive = False
+
+    failed = StubLink(failing=failure)
+    chat = Chat(name, [name])
+    chat.connection = failed
+    chat.opened = True
+    chat._started = True
+    chat.state["status"] = "waiting"
+
+    with pytest.raises(DaemonError, match="refused|no answer"):
+        getattr(chat, operation)()
+
+    assert failed.ops == [operation]
+    assert failed.unlistened == [name] and failed.closed
+    assert chat.connection is None
+    assert not chat.opened and not chat.finished
+    assert chat.status == "waiting"
+
+    recovered = StubLink()
+    monkeypatch.setattr(Link, "open", classmethod(lambda cls: recovered))
+    assert chat.start(since=0) is chat
+    assert chat.opened and not chat.finished
+
+    getattr(chat, operation)()
+    calls = recovered.ops.count(operation)
+    getattr(chat, operation)()  # success is idempotent
+    assert recovered.ops.count(operation) == calls == 1
+    if operation == "stop":
+        assert chat.finished and chat.status == "stopped"
+    else:
+        assert not chat.opened and not chat.finished
+        chat.stop()
+
+
+@pytest.mark.parametrize("operation", ["stop", "detach"])
+def test_lifecycle_state_changes_only_after_daemon_acknowledgement(name, operation):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingLink:
+        alive = True
+
+        def unlisten(self, session):
+            pass
+
+        def call(self, op, **fields):
+            if op == operation:
+                entered.set()
+                release.wait(timeout=5)
+            return {}
+
+        def close(self):
+            self.alive = False
+
+    chat = Chat(name, [name])
+    chat.connection = BlockingLink()
+    chat.opened = True
+    chat._started = True
+    finished = threading.Event()
+
+    def lifecycle_call():
+        getattr(chat, operation)()
+        finished.set()
+
+    calling = threading.Thread(target=lifecycle_call)
+    calling.start()
+    assert entered.wait(timeout=1)
+    assert chat.opened and not chat.finished
+    assert not finished.is_set()
+
+    release.set()
+    assert finished.wait(timeout=1)
+    calling.join(timeout=1)
+    assert not chat.opened
+    assert chat.finished is (operation == "stop")
+    if operation == "detach":
+        chat.stop()
+
+
+def test_a_stale_disconnect_cannot_close_or_strand_a_reopened_chat(monkeypatch, name):
+    """A slow old callback may overlap reopen without owning its new link."""
+
+    def snapshot(seq):
+        return {
+            "session": name,
+            "status": "waiting",
+            "seq": seq,
+            "queued": 0,
+            "in_turn": False,
+        }
+
+    def text(seq, said):
+        return {
+            "stream": "event",
+            "session": name,
+            "event": {"type": Event.TEXT, "seq": seq, "text": said},
+            "snapshot": snapshot(seq),
+        }
+
+    class StubLink:
+        def __init__(self, replay=None, seq=-1):
+            self.alive = True
+            self.replay = replay
+            self.snapshot = snapshot(seq)
+            self.listener = None
+
+        def listen(self, session, handler):
+            self.listener = handler
+
+        def unlisten(self, session):
+            self.listener = None
+
+        def call(self, op, **fields):
+            if op == "open":
+                if self.replay is not None:
+                    self.listener(self.replay)
+                return {"snapshot": self.snapshot}
+            return {}
+
+        def close(self):
+            self.alive = False
+
+        def emit(self, frame):
+            self.listener(frame)
+
+    old = StubLink()
+    new = StubLink(replay=text(1, "new"), seq=1)
+    links = iter((old, new))
+    monkeypatch.setattr(Link, "open", classmethod(lambda cls: next(links)))
+
+    chat = Chat(name, [name]).start()
+    entered = threading.Event()
+    release = threading.Event()
+    delivered = threading.Event()
+    callbacks = []
+
+    @chat.on_event
+    def observe(event):
+        callbacks.append(event.seq)
+        if event.seq == 0:
+            entered.set()
+            release.wait(timeout=5)
+        elif event.seq == 1:
+            delivered.set()
+
+    old.emit(text(0, "old"))
+    assert entered.wait(timeout=1)
+    old.alive = False
+    old.emit({"stream": "disconnected", "session": name})
+
+    reopened = threading.Event()
+    errors = []
+
+    def reopen():
+        try:
+            chat.start(since=1)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            reopened.set()
+
+    opening = threading.Thread(target=reopen)
+    opening.start()
+    assert reopened.wait(timeout=1), "reopen waited for the old user callback"
+    opening.join(timeout=1)
+    assert not errors
+    assert chat.opened
+    assert chat.seen == 0, "the snapshot must not advance the callback cursor"
+
+    release.set()
+    assert delivered.wait(timeout=1)
+    assert callbacks == [0, 1]
+    assert chat.opened and chat.seen == 1
+    chat.detach()

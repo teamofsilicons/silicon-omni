@@ -2,6 +2,7 @@
 //!
 //! Set `OMNI_HOME` to relocate the whole tree (tests do exactly this).
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -74,5 +75,42 @@ pub fn log_file() -> PathBuf {
 }
 
 pub fn ensure(path: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)
+    let existed = path.exists();
+    std::fs::create_dir_all(path)?;
+    // Session history, provider metadata, the control socket, and jailed auth
+    // links all live below this tree. A permissive umask must not expose them
+    // to another local account.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    if !existed {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            // Make the new directory entry survive the same power-loss boundary
+            // as the private files subsequently acknowledged beneath it.
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_directories_are_private_even_under_a_permissive_umask() {
+        let path = std::env::temp_dir().join(format!("omni-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        ensure(&path).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let _ = std::fs::remove_dir_all(path);
+    }
 }

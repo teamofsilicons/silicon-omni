@@ -132,4 +132,5 @@ def test_only_an_all_live_selection_may_use_the_real_home():
     assert wants_live([live])
     assert not wants_live([])
     assert not wants_live([offline])
-    assert not wants_live([live, offline])
+    with pytest.raises(pytest.UsageError, match="cannot share one run"):
+        wants_live([live, offline])

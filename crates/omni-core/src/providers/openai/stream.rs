@@ -41,7 +41,7 @@ impl Stream {
     }
 
     pub fn feed(&mut self, method: &str, params: &Value) -> Vec<Event> {
-        match method {
+        let mut events = match method {
             "item/started" => self.started(&params["item"]),
             "item/completed" => self.completed(&params["item"]),
             "turn/completed" => self.finished(&params["turn"]),
@@ -51,7 +51,22 @@ impl Stream {
                 Vec::new()
             }
             _ => Vec::new(),
+        };
+        for event in &mut events {
+            for (key, value) in [
+                ("thread_id", params.get("threadId")),
+                (
+                    "turn_id",
+                    params.get("turnId").or_else(|| params["turn"].get("id")),
+                ),
+                ("item_id", params["item"].get("id")),
+            ] {
+                if let Some(value) = value.filter(|value| !value.is_null()) {
+                    event.native.insert(key.into(), value.clone());
+                }
+            }
         }
+        events
     }
 
     fn started(&self, item: &Value) -> Vec<Event> {
@@ -212,10 +227,17 @@ mod tests {
         let mut stream = Stream::default();
         let call = stream.feed(
             "item/started",
-            &json!({"item": {"type": SHELL, "id": "c1", "command": "ls -l"}}),
+            &json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "item": {"type": SHELL, "id": "c1", "command": "ls -l"}
+            }),
         );
         assert_eq!(call[0].tool, "shell");
         assert_eq!(call[0].args["command"], "ls -l");
+        assert_eq!(call[0].native["thread_id"], "thread-1");
+        assert_eq!(call[0].native["turn_id"], "turn-1");
+        assert_eq!(call[0].native["item_id"], "c1");
         let done = stream.feed(
             "item/completed",
             &json!({

@@ -28,7 +28,13 @@ impl Stream {
     }
 
     fn event(&self, kind: &str) -> Event {
-        Event::new(kind).from(super::NAME).about(&self.model)
+        let mut event = Event::new(kind).from(super::NAME).about(&self.model);
+        if !self.conversation.is_empty() {
+            event
+                .native
+                .insert("conversation_id".into(), json!(self.conversation));
+        }
+        event
     }
 
     pub fn feed(&mut self, line: &str) -> Vec<Event> {
@@ -42,10 +48,30 @@ impl Stream {
                 }
                 Vec::new()
             }
-            Some("step_update") => self.step(&data["step_update"]),
-            Some("result") => self.finished(&data["result"]),
+            Some("step_update") => {
+                self.remember_conversation(&data["step_update"]);
+                self.step(&data["step_update"])
+            }
+            Some("result") => {
+                self.remember_conversation(&data["result"]);
+                self.finished(&data["result"])
+            }
             _ => Vec::new(),
         }
+    }
+
+    fn remember_conversation(&mut self, value: &Value) {
+        if let Some(id) = value.get("conversation_id").and_then(Value::as_str) {
+            self.conversation = id.to_string();
+        }
+    }
+
+    fn step_event(&self, kind: &str, index: i64) -> Event {
+        let mut event = self.event(kind);
+        if index >= 0 {
+            event.native.insert("step_index".into(), json!(index));
+        }
+        event
     }
 
     fn step(&mut self, step: &Value) -> Vec<Event> {
@@ -65,7 +91,7 @@ impl Stream {
         }
         let mut events = Vec::new();
         if step["usage"]["thinking_tokens"].as_i64().unwrap_or(0) > 0 {
-            events.push(self.event(kind::THINKING));
+            events.push(self.step_event(kind::THINKING, index));
         }
         let said = self
             .text
@@ -74,7 +100,7 @@ impl Stream {
             .trim()
             .to_string();
         if !said.is_empty() {
-            events.push(self.event(kind::TEXT).saying(said));
+            events.push(self.step_event(kind::TEXT, index).saying(said));
         }
         events
     }
@@ -89,7 +115,7 @@ impl Stream {
             .to_string();
         let mut events = Vec::new();
         if self.called.insert(index) {
-            let mut call = self.event(kind::TOOL_CALL);
+            let mut call = self.step_event(kind::TOOL_CALL, index);
             call.tool = name.clone();
             call.id = index.to_string();
             call.args = info["parameters"].as_object().cloned().unwrap_or_default();
@@ -101,7 +127,7 @@ impl Stream {
         self.called.remove(&index);
         let failure = &info["error"];
         let failed = failure.is_object();
-        let mut result = self.event(kind::TOOL_RESULT);
+        let mut result = self.step_event(kind::TOOL_RESULT, index);
         result.tool = name;
         result.id = index.to_string();
         result.result = if failed {
@@ -115,14 +141,24 @@ impl Stream {
     }
 
     fn finished(&mut self, result: &Value) -> Vec<Event> {
+        // Step indexes are scoped to one native turn. A failed or interrupted
+        // turn may never send DONE for its active steps, and agy reuses the
+        // same indexes on the next turn. Keeping either accumulator here would
+        // prepend stale text or suppress the next tool call.
+        self.text.clear();
+        self.called.clear();
         let mut events = Vec::new();
         if result["status"].as_str() == Some("ERROR") {
             let said = result["error"].as_str().unwrap_or("agy turn failed");
-            events.push(
-                Event::failure(classify(said), said)
-                    .from(super::NAME)
-                    .about(&self.model),
-            );
+            let mut event = Event::failure(classify(said), said)
+                .from(super::NAME)
+                .about(&self.model);
+            if !self.conversation.is_empty() {
+                event
+                    .native
+                    .insert("conversation_id".into(), json!(self.conversation));
+            }
+            events.push(event);
         }
         events.push(
             self.event(kind::END)
@@ -191,6 +227,7 @@ mod tests {
         );
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].text, "Hello there");
+        assert_eq!(done[0].native["step_index"], 0);
     }
 
     #[test]
@@ -273,10 +310,68 @@ mod tests {
         let mut stream = Stream::default();
         let events = feed(
             &mut stream,
-            json!({"event": "result", "result": {"status": "ERROR", "error": "429 quota"}}),
+            json!({
+                "event": "result",
+                "result": {
+                    "conversation_id": "c9", "status": "ERROR", "error": "429 quota"
+                }
+            }),
         );
         assert_eq!(events[0].fault, crate::events::LIMIT);
         assert!(events[1].is(kind::END));
+        assert_eq!(events[0].native["conversation_id"], "c9");
+        assert_eq!(events[1].native["conversation_id"], "c9");
+    }
+
+    #[test]
+    fn an_aborted_turn_cannot_leak_step_state_into_the_next_one() {
+        let mut stream = Stream::default();
+        feed(
+            &mut stream,
+            json!({
+                "event": "step_update",
+                "step_update": {"step_type": "agent_response", "step_index": 0,
+                                "state": "ACTIVE", "text_delta": "stale "}
+            }),
+        );
+        let first_call = feed(
+            &mut stream,
+            json!({
+                "event": "step_update",
+                "step_update": {"step_type": "tool", "step_index": 1, "state": "ACTIVE",
+                                "tool_name": "OldTool", "tool_info": {}}
+            }),
+        );
+        assert!(first_call.iter().any(|event| event.is(kind::TOOL_CALL)));
+        feed(
+            &mut stream,
+            json!({"event": "result", "result": {"status": "ERROR", "error": "aborted"}}),
+        );
+
+        let text = feed(
+            &mut stream,
+            json!({
+                "event": "step_update",
+                "step_update": {"step_type": "agent_response", "step_index": 0,
+                                "state": "DONE", "text_delta": "fresh"}
+            }),
+        );
+        assert_eq!(
+            text.iter().find(|event| event.is(kind::TEXT)).unwrap().text,
+            "fresh"
+        );
+        let second_call = feed(
+            &mut stream,
+            json!({
+                "event": "step_update",
+                "step_update": {"step_type": "tool", "step_index": 1, "state": "ACTIVE",
+                                "tool_name": "NewTool", "tool_info": {}}
+            }),
+        );
+        assert!(
+            second_call.iter().any(|event| event.is(kind::TOOL_CALL)),
+            "a reused step index must still announce the new turn's tool"
+        );
     }
 
     #[test]

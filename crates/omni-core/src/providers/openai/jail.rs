@@ -15,6 +15,10 @@
 //! app-server serve every session at once.
 
 use std::path::{Path, PathBuf};
+use std::{
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+};
 
 use crate::shared::paths;
 
@@ -32,7 +36,14 @@ pub fn build() -> std::io::Result<PathBuf> {
     let home = paths::jail("codex");
     paths::ensure(&home)?;
     relink(&home.join("auth.json"), &real_home().join("auth.json"))?;
-    std::fs::write(home.join("config.toml"), MINIMAL)?;
+    let mut config = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(home.join("config.toml"))?;
+    config.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    config.write_all(MINIMAL.as_bytes())?;
     Ok(home)
 }
 
@@ -42,10 +53,13 @@ fn relink(link: &Path, real: &Path) -> std::io::Result<()> {
     if link.symlink_metadata().is_ok() {
         std::fs::remove_file(link)?;
     }
-    if real.exists() {
-        std::os::unix::fs::symlink(real, link)?;
+    if let Some(parent) = real.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    Ok(())
+    // Keep the link even before the first login. Codex can then create the
+    // real credential file through it; otherwise a first-time login lands in
+    // the disposable jail and vanishes the next time `build` refreshes it.
+    std::os::unix::fs::symlink(real, link)
 }
 
 #[cfg(test)]
@@ -85,5 +99,21 @@ mod tests {
     fn building_twice_is_the_same_as_building_once() {
         let _home = scratch_home("codex-twice");
         assert_eq!(build().unwrap(), build().unwrap());
+    }
+
+    #[test]
+    fn first_login_can_create_the_real_auth_file_through_a_dangling_link() {
+        let root = std::env::temp_dir().join(format!("omni-codex-auth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let link = root.join("jail/auth.json");
+        let real = root.join("real/auth.json");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+
+        relink(&link, &real).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), real);
+        std::fs::write(&link, "credential").unwrap();
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "credential");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

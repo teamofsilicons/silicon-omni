@@ -7,7 +7,7 @@ offers are worth their own tests.
 
 import pytest
 
-from conftest import in_turn, settled
+from conftest import in_turn, recorded, settled
 from omni import Event, Inference
 from omni.client import DaemonError
 from omni.providers import test as double
@@ -54,6 +54,10 @@ def test_it_can_be_made_to_fail_the_way_a_real_cli_does(one, name):
     one.send("hello")
     assert settled(one)
     double.running(name).fail("crash", "the pipe went away", ends=True)
+    assert recorded(
+        one,
+        lambda event: event.type == Event.ERROR and event.error == "the pipe went away",
+    )
     assert settled(one)
     broken = [e for e in one.history() if e.type == Event.ERROR]
     assert broken and broken[-1].error == "the pipe went away"

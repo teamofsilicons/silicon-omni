@@ -47,7 +47,13 @@ def wants_live(items) -> bool:
     private too: the real home is used only for an unambiguously all-live run.
     """
     selected = list(items)
-    return bool(selected) and all(item.get_closest_marker("live") for item in selected)
+    marked = [bool(item.get_closest_marker("live")) for item in selected]
+    if any(marked) and not all(marked):
+        raise pytest.UsageError(
+            "live and offline omni tests cannot share one run: live tests use the real "
+            "~/.omni, while offline tests require an isolated home"
+        )
+    return bool(marked) and all(marked)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -146,6 +152,24 @@ def settled(chat, timeout: float = 15.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if chat.idle:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def recorded(chat, want, timeout: float = 15.0) -> bool:
+    """Wait until a durable event satisfies ``want``.
+
+    A test-provider control call acknowledges that it emitted onto the
+    conductor queue, not that the conductor has already persisted the event.
+    Tests asserting that output should wait for the output itself rather than
+    mistaking an already-waiting snapshot for completion.
+    """
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(want(event) for event in chat.history()):
             return True
         time.sleep(0.01)
     return False

@@ -28,6 +28,37 @@ pub const UNAUTHENTICATED: &str = "unauthenticated";
 /// runner it builds, and everything the model does arrives through it.
 pub type Emit = Arc<dyn Fn(Event) + Send + Sync>;
 
+/// Internal provenance carried by events whose producer can be replaced while
+/// an older event is still queued for the conductor.
+pub(crate) const GENERATION: &str = "_omni_generation";
+
+/// A provider-side acknowledgement that a user message was consumed.
+///
+/// This is deliberately not part of the public event vocabulary. Claude is
+/// the only shipped adapter that needs it: a successful pipe write merely
+/// queues a message, while its `isReplay:true` echo proves the message landed.
+/// The conductor consumes this before persistence, so it can never escape to
+/// a session file or listener.
+pub(crate) const CONFIRMED: &str = "_omni_send_confirmed";
+pub(crate) const CONFIRMED_AS: &str = "_omni_confirmed_as";
+
+pub(crate) fn confirmed(text: &str, opening: &str) -> Event {
+    Event::new(CONFIRMED)
+        .saying(text)
+        .with(CONFIRMED_AS, opening)
+}
+
+/// What a successful [`Runner::send`] means at the provider boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// The call itself confirms delivery in the current native turn.
+    Immediate,
+    /// Delivery is only confirmed later by a provider echo.
+    Echoed,
+    /// A mid-turn write is queued as a separate native turn.
+    NextTurn,
+}
+
 /// Everything a runner needs to know that is not the conversation itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -156,6 +187,13 @@ pub trait Runner: Send {
     /// This provider's own id for the conversation, once it is up.
     fn native_id(&self) -> String;
 
+    /// Which shared process generation produced this runner's events, if it
+    /// has one. Most providers own one process per runner and need no marker;
+    /// Codex shares an app-server that can be replaced underneath many chats.
+    fn generation(&self) -> Option<u64> {
+        None
+    }
+
     /// Bring the CLI up.
     ///
     /// `native_id` is this provider's own session to resume, if it has one.
@@ -174,7 +212,7 @@ pub trait Runner: Send {
     }
 
     /// Hand a user message to the CLI, starting or joining a turn.
-    fn send(&mut self, text: &str) -> Result<(), String>;
+    fn send(&mut self, text: &str) -> Result<Delivery, String>;
 
     /// Change model or effort in place, between turns.
     ///

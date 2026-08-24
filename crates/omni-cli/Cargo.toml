@@ -1,6 +1,6 @@
 [package]
-name = "omni-client"
-description = "Thin client for the silicon omni daemon."
+name = "silicon-omni-cli"
+description = "Command-line client for the silicon omni daemon."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
 
+[[bin]]
+name = "omni"
+path = "src/main.rs"
+
 [dependencies]
-omni-core.workspace = true
-serde.workspace = true
+omni-client.workspace = true
 serde_json.workspace = true
-libc.workspace = true

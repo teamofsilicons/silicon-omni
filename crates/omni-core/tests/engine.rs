@@ -8,8 +8,9 @@ mod harness;
 use std::time::Duration;
 
 use omni_core::chat::Change;
-use omni_core::events::{AUTH, Event, kind};
+use omni_core::events::{AUTH, CRASH, Event, kind};
 use omni_core::providers::test as double;
+use omni_core::session::Meta;
 
 // ---------------------------------------------------------------- one turn
 
@@ -173,7 +174,7 @@ fn nothing_changes_mid_turn() {
     );
 
     double::running("alpha").unwrap().reply("done");
-    assert!(session.settle());
+    assert!(session.until(|state| state.idle() && state.provider == "beta"));
     assert_eq!(
         session.snapshot().provider,
         "beta",
@@ -247,6 +248,9 @@ fn losing_a_login_moves_the_chat_to_whoever_is_left() {
     session.send("again");
     session.settle_started();
     double::running("beta").unwrap().fail(AUTH, "", true);
+    assert!(
+        session.recorded(|event| { event.is(kind::CONFIG) && event.text == "provider_removed" })
+    );
     assert!(session.settle());
 
     let removed = session.notices("provider_removed");
@@ -278,6 +282,9 @@ fn a_straggling_end_does_not_close_the_successors_turn() {
     session.settle_started();
     // Every real adapter reports the failure and the end of the turn together.
     double::running("beta").unwrap().fail(AUTH, "", true);
+    assert!(
+        session.recorded(|event| { event.is(kind::CONFIG) && event.text == "provider_removed" })
+    );
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "alpha");
 
@@ -298,6 +305,7 @@ fn turning_the_failover_off_reports_and_stops() {
     session.send("hello");
     assert!(session.settle());
     double::running("beta").unwrap().fail(AUTH, "", true);
+    assert!(session.recorded(|event| event.is(kind::ERROR) && event.fault == AUTH));
     assert!(session.settle());
     assert!(session.notices("provider_removed").is_empty());
     assert_eq!(session.snapshot().providers, vec!["beta", "alpha"]);
@@ -309,6 +317,10 @@ fn losing_the_last_provider_says_so_rather_than_hanging() {
     session.send("hello");
     assert!(session.settle());
     double::running("test").unwrap().fail(AUTH, "", true);
+    assert!(
+        session
+            .recorded(|event| { event.is(kind::ERROR) && event.error.contains("log one back in") })
+    );
     assert!(session.settle());
     let blocked = session
         .log()
@@ -316,6 +328,35 @@ fn losing_the_last_provider_says_so_rather_than_hanging() {
         .find(|event| event.is(kind::ERROR) && event.error.contains("log one back in"));
     assert!(blocked.is_some(), "it said what to do");
     assert_eq!(session.snapshot().status, "waiting", "not stuck on busy");
+}
+
+#[test]
+fn failed_turns_do_not_advance_the_providers_sync_watermark() {
+    for (name, fault) in [("crash-watermark", CRASH), ("auth-watermark", AUTH)] {
+        let session = harness::start(name, &["test"]);
+        if fault == AUTH {
+            session.set(Change::Autoremove(false));
+        }
+        session.send("completed");
+        assert!(session.settle());
+        let before = Meta::open(name).native("test").1;
+
+        double::running("test").unwrap().set_knobs(double::Knobs {
+            autoreply: false,
+            ..Default::default()
+        });
+        session.send("this turn fails");
+        session.settle_started();
+        double::running("test").unwrap().fail(fault, "failed", true);
+        assert!(session.recorded(|event| { event.is(kind::ERROR) && event.error == "failed" }));
+        assert!(session.settle());
+
+        assert_eq!(
+            Meta::open(name).native("test").1,
+            before,
+            "{fault} must leave the provider at its last completed turn"
+        );
+    }
 }
 
 // ------------------------------------------------------------- what is hot
@@ -365,6 +406,45 @@ fn coming_back_to_a_parked_provider_costs_no_new_session() {
     assert!(
         recalled.contains("elsewhere"),
         "and told what it missed: {recalled}"
+    );
+}
+
+#[test]
+fn parked_deferred_catch_up_is_not_synced_before_delivery() {
+    let session = harness::two("deferred-parked");
+    session.set(Change::Level(10));
+    session.send("beta heard this live");
+    assert!(session.settle());
+    let beta = double::running("beta").unwrap();
+    beta.set_knobs(double::Knobs {
+        defer: true,
+        ..Default::default()
+    });
+    let before = Meta::open("deferred-parked").native("beta").1;
+
+    let alpha = double::running("alpha").unwrap();
+    alpha.set_knobs(double::Knobs {
+        autoreply: false,
+        ..Default::default()
+    });
+    session.set(Change::Level(0));
+    session.send("beta has not heard this yet");
+    session.settle_started();
+    session.set(Change::Level(10));
+    alpha.reply("done elsewhere");
+    assert!(session.settle());
+    assert_eq!(session.snapshot().provider, "beta");
+    assert_eq!(
+        Meta::open("deferred-parked").native("beta").1,
+        before,
+        "agy-style catch-up is only parked in memory until the next send"
+    );
+
+    session.send("deliver the catch-up");
+    assert!(session.settle());
+    assert!(
+        Meta::open("deferred-parked").native("beta").1 > before,
+        "a completed delivery advances the watermark"
     );
 }
 
@@ -478,5 +558,12 @@ fn two_messages_in_a_row_are_two_turns() {
     assert_eq!(session.count(kind::START), 2);
     assert_eq!(session.count(kind::END), 2);
     assert_eq!(session.count(kind::INJECTED), 0);
+    let starts: Vec<i64> = session
+        .log()
+        .into_iter()
+        .filter(|event| event.is(kind::START))
+        .map(|event| event.turn)
+        .collect();
+    assert_eq!(starts, vec![0, 1], "turn numbers survive provider changes");
     assert_eq!(double::running("test").unwrap().sent(), vec!["one", "two"]);
 }

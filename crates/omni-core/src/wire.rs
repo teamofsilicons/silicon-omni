@@ -37,6 +37,10 @@ pub struct Request {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<String>>,
+    /// The opening client's process directory. Used only when a session has
+    /// never pinned its own working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     /// Replay events from this position on `open`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<i64>,
@@ -57,6 +61,7 @@ impl Request {
             session: None,
             text: None,
             providers: None,
+            cwd: None,
             from: None,
             what: None,
             value: Value::Null,
@@ -241,6 +246,16 @@ mod tests {
         let raw = r#"{"id":1,"op":"send","session":"s","something_new":true}"#;
         let back: Request = serde_json::from_str(raw).unwrap();
         assert_eq!(back.op, "send");
+        assert_eq!(back.cwd, None, "cwd is additive on the wire");
+    }
+
+    #[test]
+    fn an_open_can_name_the_calling_process_directory() {
+        let mut asked = Request::new(1, "open").on("demo");
+        asked.cwd = Some("/client/work".into());
+        let line = serde_json::to_string(&asked).unwrap();
+        let back: Request = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.cwd.as_deref(), Some("/client/work"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::shared::clock;
 /// | `INJECTED` | `text` — a message that landed mid-turn |
 /// | `ERROR` | `error`, `kind` |
 /// | `SWITCH_PROVIDER` | `provider` (the new one), `extra["from"]` |
-/// | `NEW_SESSION` | `session`, `extra["native"]` |
+/// | `NEW_SESSION` | `provider`, `extra["native"]` |
 /// | `CONFIG` | `text` — what changed, `extra` — the new value |
 pub mod kind {
     pub const START: &str = "start";
@@ -40,7 +40,12 @@ pub mod kind {
     pub const SWITCH_PROVIDER: &str = "switch_provider";
     pub const NEW_SESSION: &str = "new_session";
     pub const CONFIG: &str = "config";
+    pub const SEED: &str = "seed";
 }
+
+/// Current JSONL/wire schema. Records written before this field existed default
+/// to version 1 when deserialized.
+pub const SCHEMA_VERSION: i64 = 1;
 
 /// Error classifications used by [`Event::kind`].
 pub const AUTH: &str = "auth";
@@ -61,18 +66,24 @@ pub const HISTORY_TYPES: &[&str] = &[
 
 /// One thing that happened.
 ///
-/// Three fields are on every event whatever its type. `session` is the omni
-/// session it belongs to, `at` is when it happened, and `seq` is its position
-/// in that session's log — a number that only goes up, and never repeats,
-/// across every provider the conversation has passed through.
+/// Every serialized event carries `v`, `type`, and `at`. Events committed by the
+/// daemon also carry `session` and `seq`; the latter only goes up and never
+/// repeats across every provider the conversation has passed through.
 ///
 /// `seq` is how omni knows what a provider still has to be told: the meta file
 /// records the last one each provider saw, so coming back to one replays
-/// exactly the events recorded since, and nothing twice.
+/// exactly the events recorded since, and nothing twice. `turn` groups activity
+/// beginning with the first `START` at zero. `native` retains provider-reported
+/// identities for fidelity and diagnosis without making them portable history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
+    /// On-disk schema version. Missing on pre-0.4 records and therefore
+    /// defaulted to the first schema when they are read back.
+    #[serde(default = "schema_version")]
+    pub v: i64,
     #[serde(rename = "type")]
     pub kind: String,
+    /// The cross-provider omni session this durable event belongs to.
     #[serde(default, skip_serializing_if = "str::is_empty")]
     pub session: String,
     #[serde(default, skip_serializing_if = "str::is_empty")]
@@ -100,8 +111,18 @@ pub struct Event {
     pub error: String,
     #[serde(default = "clock::now")]
     pub at: String,
+    /// Monotonic position in one session's complete durable event log.
     #[serde(default = "unplaced", skip_serializing_if = "is_unplaced")]
     pub seq: i64,
+    /// Omni's turn number. Bookkeeping before the first user message is -1
+    /// and omitted; the first START is turn 0.
+    #[serde(default = "unplaced", skip_serializing_if = "is_unplaced")]
+    pub turn: i64,
+    /// Provider-native identity that is useful for exact replay and diagnosis
+    /// (conversation, message, thread, turn, item, tool-call, or step ids).
+    /// Translation deliberately ignores these as portable conversation state.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub native: Map<String, Value>,
     /// The catch-all. For `CONFIG` events `text` says what changed and this
     /// says what to: `launch`, `retune`, `reseed`, `stop`, `provider_removed`,
     /// `unsupported`, `approximated`, or the name of whatever call was made.
@@ -111,6 +132,9 @@ pub struct Event {
 
 fn yes() -> bool {
     true
+}
+fn schema_version() -> i64 {
+    SCHEMA_VERSION
 }
 fn is_yes(ok: &bool) -> bool {
     *ok
@@ -125,6 +149,7 @@ fn is_unplaced(seq: &i64) -> bool {
 impl Event {
     pub fn new(kind: &str) -> Self {
         Event {
+            v: SCHEMA_VERSION,
             kind: kind.into(),
             session: String::new(),
             provider: String::new(),
@@ -139,6 +164,8 @@ impl Event {
             error: String::new(),
             at: clock::now(),
             seq: -1,
+            turn: -1,
+            native: Map::new(),
             extra: Map::new(),
         }
     }
@@ -207,29 +234,55 @@ impl Event {
 /// need to log in, wait, retry, or look at a stack trace.
 pub fn classify(text: &str) -> &'static str {
     let lowered = text.to_lowercase();
-    let faults: [(&'static str, &[&str]); 3] = [
-        (AUTH, &["auth", "unauthorized", "401", "login", "sign in"]),
-        (LIMIT, &["rate", "limit", "quota", "429"]),
-        (
-            UNAVAILABLE,
-            &[
-                "overload",
-                "unavailable",
-                "disconnect",
-                "timeout",
-                "404",
-                "503",
-                "502",
-                "model_not_found",
-                "model not found",
-                "invalid model",
-            ],
-        ),
-    ];
-    for (fault, words) in faults {
-        if words.iter().any(|word| lowered.contains(word)) {
-            return fault;
-        }
+    let words: Vec<&str> = lowered
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let has = |wanted: &[&str]| words.iter().any(|word| wanted.contains(word));
+    let phrase = |wanted: &[&str]| words.windows(wanted.len()).any(|window| window == wanted);
+
+    if has(&[
+        "auth",
+        "oauth",
+        "authentication",
+        "authorization",
+        "unauthenticated",
+        "unauthorized",
+        "login",
+        "signin",
+        "401",
+    ]) || phrase(&["sign", "in"])
+    {
+        return AUTH;
+    }
+    if has(&[
+        "rate",
+        "ratelimit",
+        "ratelimits",
+        "limit",
+        "limited",
+        "quota",
+        "429",
+    ]) {
+        return LIMIT;
+    }
+    if has(&[
+        "overload",
+        "overloaded",
+        "unavailable",
+        "disconnect",
+        "disconnected",
+        "disconnection",
+        "timeout",
+        "timeouts",
+        "404",
+        "502",
+        "503",
+    ]) || phrase(&["timed", "out"])
+        || phrase(&["model", "not", "found"])
+        || phrase(&["invalid", "model"])
+    {
+        return UNAVAILABLE;
     }
     CRASH
 }
@@ -247,7 +300,7 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, vec!["at", "type"], "{written}");
+        assert_eq!(keys, vec!["at", "type", "v"], "{written}");
     }
 
     #[test]
@@ -267,6 +320,7 @@ mod tests {
         assert_eq!(back.provider, "claude");
         assert_eq!(back.model, "some-model");
         assert_eq!(back.extra["left"], 2);
+        assert_eq!(back.v, SCHEMA_VERSION);
         assert!(!back.ok);
     }
 
@@ -279,11 +333,32 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_versioned_record_is_schema_one() {
+        let back: Event = serde_json::from_value(serde_json::json!({
+            "type": "text",
+            "text": "from 0.3"
+        }))
+        .unwrap();
+        assert_eq!(back.v, SCHEMA_VERSION);
+    }
+
+    #[test]
     fn failures_are_sorted_into_the_four_kinds_that_matter() {
         assert_eq!(classify("OAuth token expired, please sign in"), AUTH);
+        assert_eq!(classify("authentication_error"), AUTH);
         assert_eq!(classify("429 Too Many Requests"), LIMIT);
+        assert_eq!(classify("rate_limit_error"), LIMIT);
         assert_eq!(classify("upstream 503"), UNAVAILABLE);
+        assert_eq!(classify("stream disconnected"), UNAVAILABLE);
+        assert_eq!(classify("model_not_found"), UNAVAILABLE);
         assert_eq!(classify("thread 'main' panicked"), CRASH);
+    }
+
+    #[test]
+    fn fragments_inside_unrelated_words_are_not_fault_signals() {
+        assert_eq!(classify("failed to generate a response"), CRASH);
+        assert_eq!(classify("authoring instructions failed"), CRASH);
+        assert_eq!(classify("the model has unlimited context"), CRASH);
     }
 
     #[test]

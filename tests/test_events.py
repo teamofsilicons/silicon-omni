@@ -14,7 +14,7 @@ def test_the_wire_strings_are_pinned():
         name: getattr(Event, name)
         for name in (
             "START", "TEXT", "THINKING", "END", "INJECTED", "ERROR",
-            "SWITCH_PROVIDER", "NEW_SESSION", "CONFIG",
+            "SWITCH_PROVIDER", "NEW_SESSION", "CONFIG", "SEED",
         )
     } == {
         "START": "start",
@@ -26,6 +26,7 @@ def test_the_wire_strings_are_pinned():
         "SWITCH_PROVIDER": "switch_provider",
         "NEW_SESSION": "new_session",
         "CONFIG": "config",
+        "SEED": "seed",
     }
     assert Event.TOOL.CALL == "tool.call" and Event.TOOL.RESULT == "tool.result"
 
@@ -43,12 +44,16 @@ def test_events_round_trip_through_the_session_file():
 
 
 def test_unset_fields_are_not_written():
-    assert set(Event(type=Event.TEXT, text="hi").to_dict()) == {"type", "text", "at"}
-    assert ALWAYS == ("type", "at")
+    assert set(Event(type=Event.TEXT, text="hi").to_dict()) == {"v", "type", "text", "at"}
+    assert ALWAYS == ("v", "type", "at")
 
 
 def test_a_file_written_by_a_newer_omni_still_loads():
     assert Event.from_dict({"type": "text", "text": "hi", "something_new": 1}).text == "hi"
+
+
+def test_a_pre_versioned_file_defaults_to_schema_one():
+    assert Event.from_dict({"type": "text", "text": "old"}).v == 1
 
 
 def test_the_daemon_and_python_describe_an_event_the_same_way(one):

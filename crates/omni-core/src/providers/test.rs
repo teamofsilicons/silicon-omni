@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use crate::events::{CRASH, Event, kind};
 use crate::intelligence::{Rung, key, write_cache};
-use crate::providers::base::{AUTHENTICATED, Account, Config, Emit, Runner};
+use crate::providers::base::{AUTHENTICATED, Account, Config, Delivery, Emit, Runner};
 use crate::translate::transcript;
 
 pub const NAME: &str = "test";
@@ -83,6 +83,8 @@ struct State {
     effort: String,
     given: Vec<Event>,
     sent: Vec<String>,
+    /// Seed accepted for delivery with the next message, as agy does.
+    pending_seed: bool,
     resumed: bool,
     retuned: usize,
 }
@@ -262,6 +264,7 @@ impl Runner for Double {
         } else {
             native_id
         };
+        let deferred = self.live.knobs().defer && !history.is_empty();
         let mut state = self.live.state.lock().unwrap_or_else(|p| p.into_inner());
         state.resumed = !native_id.is_empty();
         state.native_id = match native_id {
@@ -270,6 +273,7 @@ impl Runner for Double {
         };
         state.given = history.to_vec();
         state.sent.clear();
+        state.pending_seed = deferred;
         state.retuned = 0;
         state.up = true;
         Ok(())
@@ -277,22 +281,21 @@ impl Runner for Double {
 
     fn seeded(&self) -> bool {
         let state = self.live.state.lock().unwrap_or_else(|p| p.into_inner());
-        !(self.live.knobs().defer && state.sent.is_empty())
+        !state.pending_seed
     }
 
-    fn send(&mut self, text: &str) -> Result<(), String> {
+    fn send(&mut self, text: &str) -> Result<Delivery, String> {
         if !self.live.up() {
             return Err(format!("{} is not running; start it first", self.live.name));
         }
         let answer = self.live.answer(text);
-        self.live
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .sent
-            .push(text.to_string());
+        {
+            let mut state = self.live.state.lock().unwrap_or_else(|p| p.into_inner());
+            state.sent.push(text.to_string());
+            state.pending_seed = false;
+        }
         if !self.live.knobs().autoreply {
-            return Ok(());
+            return Ok(Delivery::Immediate);
         }
         self.live.say(Event::new(kind::THINKING));
         let turn = self
@@ -318,16 +321,16 @@ impl Runner for Double {
         self.live.say(Event::new(kind::TEXT).saying(answer));
         self.live
             .say(Event::new(kind::END).with("stop", "complete"));
-        Ok(())
+        Ok(Delivery::Immediate)
     }
 
     fn catch_up(&mut self, history: &[Event]) -> bool {
-        self.live
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .given
-            .extend(history.to_vec());
+        let mut state = self.live.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.given.extend(history.to_vec());
+        if self.live.knobs().defer && !history.is_empty() {
+            state.pending_seed = true;
+        }
+        drop(state);
         self.alive()
     }
 

@@ -118,11 +118,17 @@ impl AppServer {
             ids: AtomicI64::new(1),
             pending,
         };
-        server.call(
+        if let Err(err) = server.call(
             "initialize",
             json!({"clientInfo": {"name": CLIENT, "version": env!("CARGO_PKG_VERSION")}, "capabilities": {}}),
             Duration::from_secs(30),
-        )?;
+        ) {
+            // `LineProcess::drop` is a last-resort kill, not a synchronous
+            // reap. A server that rejects initialization is still ours to put
+            // down before returning the error to the pool.
+            server.stop();
+            return Err(err);
+        }
         Ok(server)
     }
 
@@ -181,5 +187,37 @@ impl AppServer {
 
     pub fn alive(&self) -> bool {
         self.proc.alive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialization_failure_stops_and_reaps_the_server() {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let script = r#"
+            IFS= read -r request
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"message":"not initialized"}}'
+            cat >/dev/null
+        "#;
+        let result = AppServer::start(
+            vec!["sh".into(), "-c".into(), script.into()],
+            Vec::new(),
+            None,
+            Arc::new(|_, _| {}),
+            move |code| {
+                let _ = exit_tx.send(code);
+            },
+        );
+
+        let err = result.err().expect("initialize should be rejected");
+        assert!(err.to_string().contains("initialize: not initialized"));
+        assert_eq!(
+            exit_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            0,
+            "the rejected process was synchronously reaped"
+        );
     }
 }

@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::events::Event;
-use crate::providers::base::{self, Config, Emit, Runner as RunnerTrait};
+use crate::providers::base::{self, Config, Delivery, Emit, Runner as RunnerTrait};
 use crate::shared::proc::{LineProcess, Spawn};
 use crate::translate::{SEED_HEADER, flatten};
 
@@ -81,11 +81,14 @@ impl Runner {
     /// There is no system prompt flag either, so the prompt goes in as text —
     /// an approximation, and omni says so rather than dropping it.
     fn opening(&self, history: &[Event]) -> String {
-        let prompt = if self.config.system_prompt.is_empty() {
-            &self.config.append_system_prompt
-        } else {
-            &self.config.system_prompt
-        };
+        let prompt = [
+            self.config.system_prompt.as_str(),
+            self.config.append_system_prompt.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
         if !prompt.is_empty() {
             (self.emit)(Event::config("approximated").from(super::NAME).with(
                 "system_prompt",
@@ -139,6 +142,23 @@ impl Runner {
         argv.extend(["--print".to_string(), String::new()]);
         argv
     }
+
+    fn finish_startup(&mut self) -> Result<(), String> {
+        self.native = self
+            .stream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .conversation
+            .clone();
+        if self.native.is_empty() {
+            // A successful start owns a resumable conversation. Leaving a
+            // nameless process behind would both leak it and let the conductor
+            // advance metadata for a session agy cannot resume.
+            self.stop();
+            return Err("agy did not report a conversation id during startup".into());
+        }
+        Ok(())
+    }
 }
 
 impl RunnerTrait for Runner {
@@ -151,6 +171,7 @@ impl RunnerTrait for Runner {
     }
 
     fn start(&mut self, native_id: &str, history: &[Event]) -> Result<(), String> {
+        self.stopping.store(false, Ordering::SeqCst);
         self.announce();
         self.seed = self.opening(history);
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -204,13 +225,7 @@ impl RunnerTrait for Runner {
                 break;
             }
         }
-        self.native = self
-            .stream
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .conversation
-            .clone();
-        Ok(())
+        self.finish_startup()
     }
 
     /// agy is only told anything when the next message goes out.
@@ -231,7 +246,7 @@ impl RunnerTrait for Runner {
         self.alive()
     }
 
-    fn send(&mut self, text: &str) -> Result<(), String> {
+    fn send(&mut self, text: &str) -> Result<Delivery, String> {
         let Some(proc) = &self.proc else {
             return Err("agy is not running".into());
         };
@@ -241,7 +256,7 @@ impl RunnerTrait for Runner {
             format!("{}\n\n---\n\n{text}", std::mem::take(&mut self.seed))
         };
         if proc.send_line(&user_line(&message)) {
-            Ok(())
+            Ok(Delivery::NextTurn)
         } else {
             Err("agy would not take the message".into())
         }
@@ -310,9 +325,38 @@ mod tests {
     }
 
     #[test]
+    fn replacement_and_appended_prompts_are_both_sent_in_order() {
+        let runner = runner(Config {
+            system_prompt: "replacement first".into(),
+            append_system_prompt: "append second".into(),
+            ..Config::default()
+        });
+        let opening = runner.opening(&[]);
+        assert_eq!(
+            opening,
+            format!("{INSTRUCTIONS}\n\nreplacement first\n\nappend second")
+        );
+    }
+
+    #[test]
     fn nothing_to_carry_means_nothing_to_say() {
         let mut runner = runner(Config::default());
         runner.seed = runner.opening(&[]);
         assert!(runner.seeded(), "an empty seed is already delivered");
+    }
+
+    #[test]
+    fn startup_without_a_conversation_id_fails_and_reaps_agy() {
+        let mut runner = runner(Config::default());
+        runner.proc = Some(Spawn::new(["cat"]).start().unwrap());
+        assert!(runner.alive());
+
+        let err = runner.finish_startup().unwrap_err();
+        assert!(err.contains("conversation id"));
+        assert!(
+            !runner.alive(),
+            "the nameless process was stopped and reaped"
+        );
+        assert!(runner.proc.is_none());
     }
 }

@@ -17,6 +17,13 @@ from omni.providers import test as double
 from omni.shared import paths
 
 
+def test_the_python_launcher_writes_each_daemon_log_line_once():
+    pid = Inference.daemon()["pid"]
+    lines = (paths.home() / "omnid.log").read_text(encoding="utf-8").splitlines()
+    listening = [line for line in lines if f"omnid[{pid}] listening on " in line]
+    assert len(listening) == 1
+
+
 def test_two_clients_hear_the_same_turn(one, name):
     heard = []
     second = Inference.load_or_create_session(name).start()

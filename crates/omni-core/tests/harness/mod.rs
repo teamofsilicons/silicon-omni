@@ -88,10 +88,24 @@ impl Session {
         self.until(|snapshot| snapshot.in_turn)
     }
 
-    fn until(&self, want: impl Fn(&Snapshot) -> bool) -> bool {
+    pub fn until(&self, want: impl Fn(&Snapshot) -> bool) -> bool {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if want(&self.snapshot()) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// Wait for the durable event itself. Provider controls emit onto the
+    /// conductor queue asynchronously, so an already-idle snapshot alone is
+    /// not proof that the requested output has been handled and published.
+    pub fn recorded(&self, want: impl Fn(&Event) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if self.log().iter().any(&want) {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(5));

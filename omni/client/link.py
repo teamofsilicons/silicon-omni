@@ -1,8 +1,10 @@
-"""The connection to the daemon.
+"""Connections to the daemon.
 
-One socket per process, shared by every session in it. A reader thread pulls
-lines off it and sorts them: a line with an ``id`` answers somebody's request, a
-line with a ``stream`` belongs to a session and goes to whoever opened it.
+Each open ``Chat`` owns a socket because the connection is its subscription. A
+separate process-wide socket is shared by one-off provider, account, quota, and
+dial calls. Every connection has a reader thread that sorts its lines: one with
+an ``id`` answers a request, while one with a ``stream`` belongs to the session
+opened on that connection.
 
 Requests are answered out of order, and events arrive in between them, so
 nothing here ever assumes the next line is the one it wanted.
@@ -14,6 +16,8 @@ import socket
 import threading
 
 from .daemon import DaemonError, start
+
+PROTOCOL = 1
 
 
 class Link:
@@ -45,6 +49,19 @@ class Link:
         self.alive = True
         self.reader = threading.Thread(target=self.pump, daemon=True, name="omni:link")
         self.reader.start()
+        try:
+            hello = self.call("ping", timeout=5.0)
+        except BaseException:
+            self.close()
+            raise
+        if hello.get("protocol") != PROTOCOL:
+            self.close()
+            raise DaemonError(
+                f"omni protocol mismatch: Python speaks {PROTOCOL}, "
+                f"but the running daemon speaks {hello.get('protocol')!r}. "
+                "Stop the old daemon and retry."
+            )
+        self.hello = hello
 
     # ------------------------------------------------------------- lifecycle
 

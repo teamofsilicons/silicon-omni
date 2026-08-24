@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
-use omni_core::chat::{Change, Wake};
+use omni_core::chat::Change;
 use omni_core::providers::test as double;
 use omni_core::session::Store;
 use omni_core::wire::{OPS, PROTOCOL, Reply, Request};
@@ -52,6 +52,9 @@ impl Daemon {
         // can accidentally reach either layer with a path supplied by a client.
         if let Some(session_id) = request.session.as_deref() {
             validate_session_id(session_id)?;
+        }
+        if self.stopping.load(Ordering::SeqCst) && request.op != "shutdown" {
+            return Err("the omni daemon is shutting down".into());
         }
         match request.op.as_str() {
             "ping" => Ok(json!({
@@ -96,15 +99,26 @@ impl Daemon {
     fn open(&self, request: &Request, conn: &Arc<Connection>) -> Result<Value, String> {
         let session_id = self.named(request)?;
         let asked = request.providers.clone().filter(|named| !named.is_empty());
+        let mut changes = settings(&request.value)?;
+        // An explicit provider list is itself a setting. It seeds a new Chat,
+        // and it must also overwrite the provider set when this is an attach to
+        // a session the daemon is already keeping warm. A later queued
+        // `active_inference_providers` call still wins because order is kept.
+        if let Some(named) = &asked {
+            changes.insert(0, Change::Providers(named.clone()));
+        }
+        let initial = asked.clone();
         // Settings travel with the open so they are in hand before the first
         // provider comes up. Sending them afterwards would start whatever the
         // session last used and then immediately replace it.
-        let live = self.registry.open(
+        let (live, replayed) = self.registry.open(
             &session_id,
-            || asked.unwrap_or_else(|| providers::available(None)),
-            settings(&request.value)?,
-        );
-        let replayed = live.attach(conn.clone(), request.from.unwrap_or(0));
+            || initial.unwrap_or_else(|| providers::available(None)),
+            changes,
+            request.cwd.as_deref(),
+            conn.clone(),
+            request.from.unwrap_or(0),
+        )?;
         let mut listening = conn.listening.lock().unwrap_or_else(|p| p.into_inner());
         if !listening.contains(&session_id) {
             listening.push(session_id.clone());
@@ -120,22 +134,16 @@ impl Daemon {
     fn send(&self, request: &Request) -> Result<Value, String> {
         let session_id = self.named(request)?;
         let text = request.text.clone().ok_or("send needs text")?;
-        let live = self
-            .registry
-            .get(&session_id)
-            .ok_or_else(|| gone(&session_id))?;
-        Ok(json!({"accepted": live.handle.send(&text)}))
+        self.registry.send(&session_id, &text)?;
+        Ok(json!({"accepted": true}))
     }
 
     fn set(&self, request: &Request) -> Result<Value, String> {
         let session_id = self.named(request)?;
         let what = request.what.clone().ok_or("set needs a `what`")?;
         let change = change_from(&what, &request.value)?;
-        let live = self
-            .registry
-            .get(&session_id)
-            .ok_or_else(|| gone(&session_id))?;
-        Ok(json!({"accepted": live.handle.post(Wake::Set(change))}))
+        self.registry.set(&session_id, change)?;
+        Ok(json!({"accepted": true}))
     }
 
     fn detach(&self, request: &Request, conn: &Arc<Connection>) -> Result<Value, String> {
@@ -164,7 +172,13 @@ impl Daemon {
     fn events(&self, request: &Request) -> Result<Value, String> {
         let session_id = self.named(request)?;
         let from = request.from.unwrap_or(0);
-        Ok(json!({"events": Store::open(&session_id).events(from)}))
+        let store = Store::open(&session_id);
+        if let Some(error) = store.load_error() {
+            return Err(format!(
+                "session {session_id:?} has a corrupt event log: {error}"
+            ));
+        }
+        Ok(json!({"events": store.events(from)}))
     }
 
     fn sessions(&self) -> Value {
@@ -226,6 +240,13 @@ impl Daemon {
     fn test(&self, request: &Request) -> Result<Value, String> {
         let what = request.what.as_deref().unwrap_or("install");
         match what {
+            #[cfg(test)]
+            "sleep" => {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    request.value["milliseconds"].as_u64().unwrap_or(0),
+                ));
+                Ok(json!(true))
+            }
             "install" => {
                 let names = request.providers.clone().unwrap_or_default();
                 let rungs: Vec<intelligence::Rung> = serde_json::from_value(
@@ -372,6 +393,9 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
 
+    use omni_core::providers::test as double;
+    use omni_core::testing::scratch_home;
+
     #[test]
     fn normal_session_ids_are_preserved() {
         for session_id in [
@@ -421,5 +445,96 @@ mod tests {
             );
         }
         assert!(daemon.registry.snapshots().is_empty());
+    }
+
+    #[test]
+    fn open_reports_corrupt_metadata_instead_of_acknowledging_and_overwriting_it() {
+        let _home = scratch_home("serve-corrupt-meta");
+        std::fs::create_dir_all(omni_core::shared::paths::sessions()).unwrap();
+        let path = omni_core::shared::paths::meta_file("s");
+        std::fs::write(&path, "{keep this malformed state").unwrap();
+        double::forget_all();
+        let names = double::install(&["test".into()], &[]);
+        let daemon = Daemon::default();
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        let conn = Connection::new(1, ours);
+        let mut request = Request::new(1, "open").on("s");
+        request.providers = Some(names);
+
+        let reply = daemon.answer(&request, &conn);
+
+        assert!(!reply.ok);
+        assert!(reply.error.unwrap().contains("metadata"));
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{keep this malformed state"
+        );
+        assert!(daemon.registry.get("s").is_none());
+        daemon.registry.shutdown();
+    }
+
+    #[test]
+    fn set_and_send_return_failures_when_the_local_journal_cannot_commit() {
+        let _home = scratch_home("serve-durable-errors");
+        double::forget_all();
+        let names = double::install(&["test".into()], &[]);
+        let daemon = Daemon::default();
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        let conn = Connection::new(1, ours);
+
+        for (session, request) in [
+            (
+                "set-fails",
+                Request::new(2, "set")
+                    .on("set-fails")
+                    .about("intelligence", json!(8)),
+            ),
+            (
+                "send-fails",
+                Request::new(3, "send")
+                    .on("send-fails")
+                    .saying("must be durable"),
+            ),
+        ] {
+            let mut open = Request::new(1, "open").on(session);
+            open.providers = Some(names.clone());
+            assert!(daemon.answer(&open, &conn).ok);
+            // Meta stages each atomic rewrite at this exact private path. A
+            // directory there simulates a local journal write failure without
+            // changing the production path or relying on uid permissions.
+            let staging = omni_core::shared::paths::sessions()
+                .join(format!(".{session}.meta.{}", std::process::id()));
+            std::fs::create_dir(&staging).unwrap();
+
+            let reply = daemon.answer(&request, &conn);
+            assert!(!reply.ok, "{session} was incorrectly acknowledged");
+            let error = reply.error.unwrap();
+            assert!(
+                error.contains("saving") || error.contains("persistence"),
+                "unexpected durable refusal: {error}"
+            );
+        }
+        daemon.registry.shutdown();
+    }
+
+    #[test]
+    fn one_shot_events_refuse_a_corrupt_log_instead_of_returning_its_prefix() {
+        let _home = scratch_home("serve-corrupt-events");
+        std::fs::create_dir_all(omni_core::shared::paths::sessions()).unwrap();
+        let path = omni_core::shared::paths::session_file("s");
+        let valid = omni_core::events::Event::new(omni_core::events::kind::TEXT)
+            .saying("known prefix")
+            .to_value();
+        std::fs::write(&path, format!("{valid}\n{{not valid json}}\n")).unwrap();
+        let daemon = Daemon::default();
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        let conn = Connection::new(1, ours);
+
+        let reply = daemon.answer(&Request::new(1, "events").on("s"), &conn);
+
+        assert!(!reply.ok);
+        assert!(reply.result.is_null(), "no valid prefix was returned");
+        assert!(reply.error.unwrap().contains("corrupt event log"));
+        daemon.registry.shutdown();
     }
 }

@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::events::Event;
-use crate::providers::base::{self, Config, Emit, Runner as RunnerTrait};
+use crate::providers::base::{self, Config, Delivery, Emit, Runner as RunnerTrait};
 use crate::shared::proc::{LineProcess, Spawn};
 use crate::translate::transcript;
 
@@ -212,10 +212,19 @@ impl RunnerTrait for Runner {
         Ok(())
     }
 
-    fn send(&mut self, text: &str) -> Result<(), String> {
-        match &self.proc {
-            Some(proc) if proc.send_line(&session::user_line(text)) => Ok(()),
-            _ => Err("claude would not take the message".into()),
+    fn send(&mut self, text: &str) -> Result<Delivery, String> {
+        let Some(proc) = &self.proc else {
+            return Err("claude would not take the message".into());
+        };
+        // Hold this lock across the pipe write. The stdout reader uses the
+        // same lock, so even an immediate replay echo sees its FIFO entry.
+        let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+        stream.expect_user(text);
+        if proc.send_line(&session::user_line(text)) {
+            Ok(Delivery::Echoed)
+        } else {
+            stream.forget_last_user();
+            Err("claude would not take the message".into())
         }
     }
 

@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::events::Event;
-use crate::providers::base::{Config, Emit, Runner as RunnerTrait};
+use crate::providers::base::{Config, Delivery, Emit, Runner as RunnerTrait};
 use crate::translate::{Turn, transcript};
 
 use super::server::{self, Shared};
@@ -118,16 +118,11 @@ impl Runner {
                 .as_str()
                 .unwrap_or(native_id)
                 .to_string()),
-            Err(err) => {
-                (self.emit)(
-                    Event::failure(
-                        crate::events::CRASH,
-                        format!("could not resume codex thread {native_id}: {err}"),
-                    )
-                    .from(super::NAME),
-                );
-                self.open(shared)
-            }
+            // Losing Codex's native thread is recoverable: `Chat::launch`
+            // notices the replacement id and records the reseed. Emitting a
+            // fatal CRASH here races with that replacement and can tear the
+            // healthy new thread down after it was adopted.
+            Err(_) => self.open(shared),
         }
     }
 
@@ -173,6 +168,10 @@ impl RunnerTrait for Runner {
         self.thread.clone()
     }
 
+    fn generation(&self) -> Option<u64> {
+        self.shared.as_ref().map(|shared| shared.generation())
+    }
+
     fn start(&mut self, native_id: &str, history: &[Event]) -> Result<(), String> {
         self.announce();
         let shared = Shared::get(&flags(&self.config)).map_err(|err| err.to_string())?;
@@ -184,7 +183,6 @@ impl RunnerTrait for Runner {
         if self.thread.is_empty() {
             return Err("codex started a thread with no id".into());
         }
-        shared.attach(&self.thread, &self.config.model, self.emit.clone());
         if self.config.disable_subagents {
             shared.silence_skills(&self.config.cwd);
         }
@@ -198,17 +196,20 @@ impl RunnerTrait for Runner {
                 )
                 .map_err(|err| err.to_string())?;
         }
+        if !shared.attach(&self.thread, &self.config.model, self.emit.clone()) {
+            return Err("codex app-server exited while attaching the thread".into());
+        }
         self.shared = Some(shared);
         Ok(())
     }
 
-    fn send(&mut self, text: &str) -> Result<(), String> {
+    fn send(&mut self, text: &str) -> Result<Delivery, String> {
         let Some(shared) = &self.shared else {
             return Err("codex is not running".into());
         };
         let turn = shared.turn_of(&self.thread);
         if !turn.is_empty() && self.steer(shared, text, &turn) {
-            return Ok(());
+            return Ok(Delivery::Immediate);
         }
         let mut body = json!({
             "threadId": self.thread,
@@ -225,7 +226,7 @@ impl RunnerTrait for Runner {
         }
         shared
             .call("turn/start", body, Duration::from_secs(60))
-            .map(|_| ())
+            .map(|_| Delivery::NextTurn)
             .map_err(|err| err.to_string())
     }
 

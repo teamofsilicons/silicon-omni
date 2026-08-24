@@ -7,5 +7,5 @@
 mod meta;
 mod store;
 
-pub use meta::Meta;
+pub use meta::{Meta, PendingMessage};
 pub use store::Store;

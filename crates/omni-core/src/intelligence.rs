@@ -12,7 +12,9 @@
 //! refusal. A dial that was fetched once is reused even after it expires, so a
 //! machine that has run before keeps working offline.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -178,7 +180,18 @@ pub fn write_cache(name: &str, levels: &Value, ttl: f64) {
         name.into(),
         json!({"at": clock::epoch(), "ttl": ttl, "levels": levels}),
     );
-    let _ = std::fs::write(cache_file(), Value::Object(blob).to_string());
+    let path = cache_file();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+    {
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        let _ = file.write_all(Value::Object(blob).to_string().as_bytes());
+        let _ = file.sync_data();
+    }
 }
 
 /// The dial for these providers, from the registry or from what it said last.
@@ -205,12 +218,22 @@ pub fn levels(providers: &[String]) -> Value {
 /// Levels 0-10 for the providers you have, 10 being the best you can reach.
 pub fn table(providers: &[String]) -> BTreeMap<i64, Rung> {
     let mut out = BTreeMap::new();
+    let allowed: BTreeSet<&str> = providers.iter().map(String::as_str).collect();
     if let Some(map) = levels(providers).as_object() {
         for (level, body) in map {
             let Ok(level) = level.parse::<i64>() else {
                 continue;
             };
             if let Ok(mut rung) = serde_json::from_value::<Rung>(body.clone()) {
+                // The registry chooses models and effort, never authority. A
+                // malformed or compromised response cannot route a session to
+                // a provider the caller did not make available.
+                if !(0..LEVELS).contains(&level)
+                    || !allowed.contains(rung.provider.as_str())
+                    || rung.model.trim().is_empty()
+                {
+                    continue;
+                }
                 rung.level = level;
                 out.insert(level, rung);
             }
@@ -306,6 +329,25 @@ mod tests {
         write_cache(&key(&providers), &Value::Object(sparse), CACHE_TTL);
         assert_eq!(resolve(7, &providers).unwrap().model, "low");
         assert_eq!(resolve(10, &providers).unwrap().model, "high");
+    }
+
+    #[test]
+    fn a_registry_cannot_route_outside_the_requested_provider_set() {
+        let _home = scratch_home("dial-provider-boundary");
+        let providers = vec!["claude".to_string()];
+        write_cache(
+            &key(&providers),
+            &json!({
+                "0": {"provider": "openai", "model": "not-authorized"},
+                "1": {"provider": "claude", "model": "allowed"},
+                "12": {"provider": "claude", "model": "outside-the-dial"}
+            }),
+            CACHE_TTL,
+        );
+
+        let table = table(&providers);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table[&1].model, "allowed");
     }
 
     #[test]
