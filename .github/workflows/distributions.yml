@@ -1,0 +1,163 @@
+name: Build distributions
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: ${{ matrix.label }} wheel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: manylinux x86_64
+            runner: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+            macos_target: ""
+            artifact: wheel-manylinux-x86_64
+          - label: manylinux aarch64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+            macos_target: ""
+            artifact: wheel-manylinux-aarch64
+          - label: macOS x86_64
+            runner: macos-15-intel
+            platform: macos
+            arch: x86_64
+            macos_target: "10.12"
+            artifact: wheel-macos-x86_64
+          - label: macOS arm64
+            runner: macos-15
+            platform: macos
+            arch: arm64
+            macos_target: "11.0"
+            artifact: wheel-macos-arm64
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Linux wheels build in manylinux containers, so Rust is installed by
+      # CIBW_BEFORE_ALL_LINUX below. macOS builds directly on the runner.
+      - name: Install Rust on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            -o "$RUNNER_TEMP/rustup-init.sh"
+          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain 1.85.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==4.2.0
+
+      - name: Build, audit, and install-smoke wheel
+        env:
+          CIBW_ARCHS: ${{ matrix.arch }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
+          CIBW_BEFORE_ALL_LINUX: >-
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
+            -o /tmp/rustup-init.sh &&
+            sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain 1.85.0 &&
+            $HOME/.cargo/bin/rustc --version &&
+            $HOME/.cargo/bin/cargo --version
+          CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
+        run: >-
+          python -m cibuildwheel
+          --platform ${{ matrix.platform }}
+          --output-dir wheelhouse
+
+      - name: Verify the wheel filename
+        shell: bash
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          wheels = list(Path("wheelhouse").glob("*.whl"))
+          assert len(wheels) == 1, f"expected exactly one wheel, found {wheels}"
+          name = wheels[0].name
+          assert "-py3-none-" in name, name
+          assert name.endswith(f"_{os.environ['EXPECTED_ARCH']}.whl"), name
+          if os.environ["EXPECTED_PLATFORM"] == "linux":
+              assert "-manylinux_" in name, name
+              assert "musllinux" not in name, name
+          else:
+              assert "-macosx_" in name, name
+          PY
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build and inspect sdist
+        shell: bash
+        run: |
+          python -m pip install 'build>=1.2,<2' 'twine>=7,<8'
+          python -m build --sdist --outdir dist
+          python -m twine check dist/*.tar.gz
+          python - <<'PY'
+          import tarfile
+          from pathlib import Path
+
+          archives = list(Path("dist").glob("*.tar.gz"))
+          assert len(archives) == 1, archives
+          with tarfile.open(archives[0], "r:gz") as archive:
+              names = archive.getnames()
+          root = names[0].split("/", 1)[0]
+          required = {
+              "Cargo.lock",
+              "Cargo.toml",
+              "LICENSE",
+              "hatch_build.py",
+              "omni/__init__.py",
+              "tests/wheel_smoke.py",
+              "crates/omni-cli/Cargo.toml",
+              "crates/omni-client/Cargo.toml",
+              "crates/omni-core/Cargo.toml",
+              "crates/omni-daemon/Cargo.toml",
+          }
+          present = {name.removeprefix(f"{root}/") for name in names}
+          missing = required - present
+          assert not missing, f"sdist is missing release inputs: {sorted(missing)}"
+          PY
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: source-distribution
+          path: dist/*.tar.gz
+          if-no-files-found: error

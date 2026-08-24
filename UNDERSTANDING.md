@@ -1,10 +1,25 @@
-We're making silicon omni. this is a unified python package to communicate with claude code, codex or gemini models powered via subscriptions.
+We're making silicon omni. this is a python, rust, cli client connecting over a rust binary deamon to communicate with claude code, codex or gemini models powered via subscriptions.
 
 we'll use `claude -p` for claude code with json streaming
 we'll use `chatgpt app server` for connecting with openai models.
 we'll use `agy` for google's antigravity.
 
-at the end, this will be exposed as a simple python interface to access any of these inference providers.
+at the end, this will be exposed as a simple interface to access any of these inference providers.
+
+
+
+
+ARCHITECTURE:
+A rust based deamon is setup and runs on the system keeping claude, codex and agy hot for fast responses. Everything happens on this layer.
+Keeping the inference providers hot is imp because it makes omni significantly faster.
+A client side is established so that other interfaces can connect to it.
+Events and Logs are streamed over Unix Sockets.
+then we'll have a python package, a rust package, and a cli each running by connecting to the rust based deamon running.
+even the rust client connects via the client to the deamon. its to be treated the same as python and cli.
+
+
+
+
 
 ```python
 from omni import Inference, Event
@@ -127,6 +142,8 @@ eg. if i run `cd ~/Downloads/ && python ~/Documents/abc.py`, and say a claude se
 
 when its started and omni session meta file has written about this dir as the starting point for this session. all providers triggered within a given omni session will be tied to this dir.
 
+if the cwd is changed mid omni-session, then we can simply port the current running provider session into this new dir and run the command.
+
 
 
 
@@ -136,6 +153,7 @@ from omni import Inference
 
 Inference.claude.limits
 # > {"5h": {"used": 0.24, "reset": ISO string}, "7d": {"used": 0.88, "reset": ISO string}}
+# ISO string or None incase no session limit reset time. Used can also be None.
 # make sure all reset time is in ISO strings. for all providers.
 # or it could return "unauthenticated"
 ```
@@ -161,7 +179,7 @@ Store things inside a .jsonl file and keep it the json. this is the source of tr
 Providers & Intelligence
 providers does 2 things. check if the cli is installed, and then checks which ones are active (authenticated).
 
-then intelligence is a scale from 0 to 10. each number is mapped to a model + effort and will be hosted on omni.teamofsilicons.com but for now, just keep a local json file. {0: {"provider": "google", "model": "gemini-3.7-flash", "effort": "high"}, ...} like this. at this endpoint, you can give it the providers you have, and it will give you 0-10 intelligence ranking. call this when switching providers or burst the cache after 60mins.
+then intelligence is a scale from 0 to 10. each number is mapped to a model + effort and will be hosted on omni.teamofsilicons.com and cached. {0: {"provider": "google", "model": "gemini-3.7-flash", "effort": "high"}, ...} like this. at this endpoint, you can give it the providers you have, and it will give you 0-10 intelligence ranking. call this when switching providers or burst the cache after 60mins.
 
 the string you give for model and effort should not be maintained as a local dict. it should be directly pluggable into the model switcher. this is done so that when a new model is launched, the slug can be changed on the remote, and it will be implemeted upstream. programatic changes to model name or effort is ok but it should require no upkeep when new models drop. follow the same pattern.
 
@@ -186,6 +204,8 @@ Preserve, never lose.
 Omni owns the history but is read from only on switch. Use the native continue/resume when using not switching providers. model-switch is easily possible even when using a provider.
 Omni only observes the tools. Dont sit and define new ones to the providers to use.
 
+enable_subagents() / enable_mcp() to turn subagent and mcp back on.
+
 running any of the following commands anytime again will overwrite them. this is how intelligence is changed. this is how a new session is created. this is how inference providers are changed. these things can happen after the current running tool/task/turn is completed.
 ```python
 chat = Inference.load_or_create_session("session_id")
@@ -194,7 +214,7 @@ chat.inteligence(7) # 0-10 fetched from omni.teamofsilicons.com for the given se
 chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either one
 ```
 
-2 chat sessions can not have the same session id. a new one cannot be opened before the currently running one is closed. if nothing is attached to a session id, it should be automatically closed. this should not be possible for a chat to open a session id, and then die.
+every session allows multiple connects for both reading events & logs, and write/send.
 
 
 
@@ -213,6 +233,7 @@ Why it works: codex reads all its settings from one folder, and lets you choose 
 codex app-server supports seeding of conversation when switching to codex from any other provider.
 
 by default, use the jailed codex. and also disable any preloaded memories. subagents are opt in.
+ enable_mcp() wont work for codex because its always jailed.
 
 
 
@@ -225,6 +246,8 @@ agy -p --output-format stream-json --input-format stream-json \
 agy has no settings for disabling this. It has no flag for MCP, no flag for subagents, and no way to remove a tool. The fake-home trick that works for codex fails here, because agy's login is tied to the real home folder. Its ok. let antigravity load whatever it wants.
 
 there is no native way to seed, so we flatten a msg into one user msg and then continue. make sure this one msg is enough to seed back natively into other providers. this will cost one turn, but will seed the model with what it needs.
+
+since some of the things are not supported in antigravity. lets emit an announce for a certain config being unsupported. and do it only once when setting the config or switching to agy from another provider.
 
 
 
@@ -249,6 +272,7 @@ TEST:
 Implement a simple test model provider to run automatic and deterministic tests.
 Use live tests with real providers to make sure its real world resilient.
 when running live tests, keep it in the same OMNI_HOME as the real usage. then run a cleanup script after the tests are done. this will ensure that all things are as they would be during a live usage.
+use  ~/.omni/cwd/ so that its easy to cleanup after testing. seed
 
 
 
@@ -260,7 +284,7 @@ create a shared dir for shared code.
 keep the code to a minimum. if it can be done in less, lets do it in less.
 we are following a event/callback driven code style.
 this project will be open sourced, so make sure it can receive contributors. write good documentation and structure the code for understandability.
-omni will be published as a python package.
+omni will be published as a python package, rust package, and a cli.
 follow a sync approach when its for simple tasks, event/callback driven > async for complex. async otherwise.
 write test cases, mention what you're testing a test-group, and then at the end, give results.
 all tools you need are installed natively and feel free to install any package.

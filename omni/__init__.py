@@ -11,12 +11,28 @@
 
     chat.start()
     chat.send("hello")
+
+The conversation runs in omni's daemon, which keeps every provider warm and
+holds the session whether or not this program is attached. It starts itself the
+first time anything needs it, so there is nothing to set up.
 """
 
+from .chat import Chat
+from .client import DaemonError
 from .events import Event
-from .inference import Inference
-from .intelligence import NoDial
-from .session import SessionBusy
+from .inference import Inference, NoDial
 
-__version__ = "0.2.0"
-__all__ = ["Inference", "Event", "SessionBusy", "NoDial"]
+__version__ = "0.4.0"
+
+
+class SessionBusy(RuntimeError):
+    """No longer raised.
+
+    Until 0.4 a session id could only be held by one process at a time. The
+    daemon owns sessions now, so several programs can hold the same one — each
+    hears every event, and any of them can send. Kept importable so code that
+    catches it still runs.
+    """
+
+
+__all__ = ["Inference", "Event", "Chat", "DaemonError", "SessionBusy", "NoDial"]

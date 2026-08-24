@@ -1,8 +1,9 @@
 """Test group: the live-test cleanup script.
 
-Live tests run against the real ``~/.omni``, so the thing that tidies up afterwards
-deletes files in a directory the user cares about. It is exercised through its real
-entry point — argparse and all — and what matters is as much what it leaves alone.
+Live tests run against the real ``~/.omni``, so the thing that tidies up
+afterwards deletes files in a directory the user cares about. It is exercised
+through its real entry point — argparse and all — and what matters is as much
+what it leaves alone.
 """
 
 import json
@@ -13,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from omni.providers import test as provider
-from omni.shared import paths
+from conftest import wants_live
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "cleanup.py"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(home, *args):
@@ -24,80 +25,112 @@ def run(home, *args):
         [sys.executable, str(SCRIPT), *args],
         capture_output=True,
         text=True,
+        cwd=str(ROOT),
+        # A home of its own with no daemon on it: the script must not start one
+        # just to ask what is open.
         env=dict(os.environ, OMNI_HOME=str(home)),
     )
 
 
 @pytest.fixture
 def home(tmp_path):
-    """A home holding three live sessions and one the user actually wants.
-
-    ``omni_home`` in conftest already points OMNI_HOME here.
-    """
+    """A home holding three live sessions and one the user actually wants."""
     root = tmp_path / "omni"
-    paths.ensure(paths.sessions())
-    for name in ("live-claude.jsonl", "live-claude.meta.json", "live-claude.lock", "keepme.jsonl"):
-        (paths.sessions() / name).write_text("{}")
-    paths.ensure(root / "jails" / "live-openai" / "codex")
-    paths.ensure(root / "cwd" / "live-switch")
-    paths.ensure(root / "jails" / "keepme")
-    provider.install()  # pins its dial into this home's cache
+    sessions = root / "sessions"
+    sessions.mkdir(parents=True)
+    for name in ("live-claude.jsonl", "live-claude.meta.json", "keepme.jsonl"):
+        (sessions / name).write_text("{}")
+    (root / "cwd" / "live-switch").mkdir(parents=True)
+    (root / "cwd" / "keepme").mkdir(parents=True)
+    (root / "jails" / "codex").mkdir(parents=True)
+    (root / "cache").mkdir(parents=True)
+    (root / "cache" / "intelligence.json").write_text(
+        json.dumps({"version": 2, "test": {"levels": {}}, "claude+google": {"levels": {}}})
+    )
     return root
 
 
-def survivors(home):
-    return sorted(str(p.relative_to(home)) for p in home.rglob("*") if p.is_file())
+def names(home) -> set[str]:
+    return {
+        str(path.relative_to(home))
+        for path in home.rglob("*")
+        if path.is_file() or path.is_dir()
+    }
 
 
-def test_it_takes_the_live_sessions_jails_and_directories_out(home):
-    assert run(home).returncode == 0
-    left = survivors(home)
-    assert not [p for p in left if "live-" in p], left
-    assert (home / "cwd" / "live-switch").exists() is False
+def test_it_takes_the_live_leavings_out(home):
+    done = run(home)
+    assert done.returncode == 0, done.stderr
+    left = names(home)
+    assert "sessions/live-claude.jsonl" not in left
+    assert "sessions/live-claude.meta.json" not in left
+    assert "cwd/live-switch" not in left
 
 
 def test_it_leaves_everything_else_exactly_where_it_was(home):
+    before = names(home)
     run(home)
-    assert "sessions/keepme.jsonl" in survivors(home)
-    assert (home / "jails" / "keepme").is_dir()
+    after = names(home)
+    for kept in ("sessions/keepme.jsonl", "cwd/keepme", "jails/codex"):
+        assert kept in after, kept
+    assert before - after == {
+        "sessions/live-claude.jsonl",
+        "sessions/live-claude.meta.json",
+        "cwd/live-switch",
+    }
 
 
 def test_it_drops_the_pinned_test_dial_but_keeps_real_ones(home):
-    from omni.intelligence import registry
-
-    registry.write_cache(["claude"], {"0": {"provider": "claude", "model": "m", "effort": ""}})
     run(home)
     blob = json.loads((home / "cache" / "intelligence.json").read_text())
-    assert provider.NAME not in blob
-    assert "claude" in blob, "a user's real dial is not this script's business"
+    assert "test" not in blob, "the double's pinned dial is not a real one"
+    assert "claude+google" in blob, "a real dial is a cache, not litter"
 
 
 def test_a_dry_run_removes_nothing(home):
-    before = survivors(home)
+    before = names(home)
     done = run(home, "--dry-run")
     assert "would remove" in done.stdout
-    assert survivors(home) == before
+    assert names(home) == before
 
 
-def test_it_refuses_a_prefix_that_would_match_everything(home):
-    assert run(home, "--prefix", "").returncode != 0
-
-
-def test_it_refuses_a_prefix_that_is_really_a_path(home, tmp_path):
-    """``sessions/../../x`` globs straight out of the home; a prefix is an id."""
-    outside = tmp_path / "precious.txt"
-    outside.write_text("do not touch")
-    done = run(home, "--prefix", f"../../{outside.name[:8]}")
-    assert done.returncode != 0
-    assert "not a path" in done.stderr
-    assert outside.exists()
+def test_an_empty_prefix_is_refused(home):
+    done = run(home, "--prefix", "")
+    assert done.returncode != 0 and "every session" in done.stderr
 
 
 @pytest.mark.parametrize("prefix", ["*", "?", "live-*", "[a-z]"])
 def test_a_prefix_is_a_name_not_a_pattern(home, prefix):
-    """``--prefix '*'`` as a glob means the folder itself, and this script deletes
-    what it is given. Matching is a plain name comparison so it cannot."""
-    before = survivors(home)
+    """A glob would match the folders themselves. This deletes what it is given."""
+    before = names(home)
     done = run(home, "--prefix", prefix)
     assert done.returncode == 0, done.stderr
-    assert survivors(home) == before, f"{prefix!r} removed something"
+    assert names(home) == before, f"{prefix!r} matched something"
+
+
+@pytest.mark.parametrize("prefix", ["../", "a/b", "..", "x\\y"])
+def test_a_prefix_that_looks_like_a_path_is_refused(home, prefix):
+    done = run(home, "--prefix", prefix)
+    assert done.returncode != 0 and "not a path" in done.stderr
+
+
+def test_it_says_so_when_there_is_nothing_to_do(tmp_path):
+    empty = tmp_path / "empty"
+    (empty / "sessions").mkdir(parents=True)
+    assert "nothing to clean" in run(empty).stdout
+
+
+def test_only_an_all_live_selection_may_use_the_real_home():
+    class Item:
+        def __init__(self, live):
+            self.live = live
+
+        def get_closest_marker(self, name):
+            return object() if name == "live" and self.live else None
+
+    live, offline = Item(True), Item(False)
+    assert wants_live([live])
+    assert not wants_live([])
+    assert not wants_live([offline])
+    with pytest.raises(pytest.UsageError, match="cannot share one run"):
+        wants_live([live, offline])

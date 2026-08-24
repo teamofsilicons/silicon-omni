@@ -1,1 +1,1 @@
-"""Small primitives shared by every module: paths, jsonl, clock, callback bus, subprocess plumbing."""
+"""Small things with no opinion about sessions or providers."""

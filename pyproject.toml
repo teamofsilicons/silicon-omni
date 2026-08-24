@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silicon-omni"
-version = "0.2.0"
-description = "One Python interface for Claude Code, Codex and Antigravity — subscription-powered, session-portable."
+version = "0.4.0"
+description = "One Python interface for Claude Code, Codex and Antigravity, backed by a persistent Rust daemon."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -27,6 +27,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+omni = "omni.cli:main"
+
 [project.urls]
 Homepage = "https://omni.teamofsilicons.com"
 Documentation = "https://omni.teamofsilicons.com/docs"
@@ -38,6 +41,33 @@ dev = ["pytest>=8", "pytest-timeout>=2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["omni"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/Cargo.lock",
+  "/Cargo.toml",
+  "/LICENSE",
+  "/README.md",
+  "/crates",
+  "/hatch_build.py",
+  "/omni",
+  "/tests/wheel_smoke.py",
+]
+
+[tool.cibuildwheel]
+# The wheel contains Python-independent Rust executables. Build it once with
+# the oldest supported CPython, while the Hatch hook publishes a py3-none tag.
+# Linux intentionally selects manylinux only; musllinux is not built here.
+build = "cp310-manylinux_* cp310-macosx_*"
+test-sources = ["tests/wheel_smoke.py"]
+test-command = "python tests/wheel_smoke.py"
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

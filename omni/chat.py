@@ -1,37 +1,71 @@
-"""One omni session, whichever provider happens to be running it.
+"""One omni session, as seen from Python.
 
-Everything that matters happens on a single conductor thread: provider output,
-user messages and lifecycle changes all arrive on one queue and are handled in
-order. That is why callbacks fire one at a time, in the order things actually
-happened, and why nothing ever changes mid-turn.
+The conversation itself lives in the daemon: it owns the providers, the history
+and the turn boundaries, and it keeps running whether or not this process is
+attached. What is here is the part that has to be in Python — your callbacks,
+and the calls that reach the session.
 
-The rule the whole design hangs off: **nothing changes mid turn**. Intelligence,
-providers, prompts and session swaps are recorded when you ask for them and
-applied at the next turn boundary.
+That is the whole change from omni 0.3: this file used to *be* the engine, and
+now it talks to one. Nothing you write against it needs to know that. The rule
+the design hangs off is still the daemon's rule: **nothing changes mid turn**.
+
+Because the session outlives the process, two things are now true that were not
+before. Several programs can hold the same session at once — each gets every
+event, and any of them can send. And leaving is cheap: close your program and
+come back, and the provider is still warm.
 """
 
 import os
 import queue
 import threading
-from dataclasses import asdict, replace
 from typing import Callable, Sequence
 
-from .events import AUTH, CRASH, Event
-from .intelligence import resolve
-from .providers import account, runner_for
-from .providers.base import Config
-from .session import Lock, Meta, Store
-from .shared.bus import Bus
+from .client import DaemonError, Link
+from .events import Event
 
 IDLE = "idle"
 WAITING = "waiting"
 BUSY = "busy"
 STOPPED = "stopped"
 
-MODEL_EVENTS = (Event.TEXT, Event.THINKING, Event.TOOL.CALL, Event.TOOL.RESULT)
 
-#: Errors that end the turn rather than just being reported.
-FATAL = (AUTH, CRASH)
+class Bus:
+    """Callback fan-out.
+
+    omni is event driven: everything interesting is handed to whoever
+    subscribed. A handler that raises must never take the session down with it,
+    so failures are routed to ``on_error`` instead of propagating.
+    """
+
+    def __init__(self, on_error: Callable | None = None):
+        self.handlers: list[Callable] = []
+        self.on_error = on_error
+
+    def subscribe(self, fn: Callable) -> Callable:
+        """Register a handler. Returns it unchanged, so it works as a decorator."""
+        self.handlers.append(fn)
+        return fn
+
+    def emit(self, payload) -> None:
+        for fn in list(self.handlers):
+            try:
+                fn(payload)
+            except Exception as exc:  # a subscriber's bug is not the run's problem
+                if self.on_error:
+                    self.on_error(exc, fn, payload)
+
+
+class _LinkGeneration:
+    """One attempt to subscribe this Chat to one daemon connection.
+
+    A Link can finish announcing its disconnect after its replacement has
+    already opened. Frames carry this identity through the callback queue so
+    that late work from the old link cannot mutate the replacement's state.
+    """
+
+    def __init__(self):
+        self.ready = threading.Event()
+        self.accepted = False
 
 
 class Chat:
@@ -39,56 +73,63 @@ class Chat:
 
     def __init__(self, session_id: str, providers: Sequence[str]):
         self.session_id = session_id
-        self.store = Store(session_id)
-        self.meta = Meta(session_id)
-        self.lock = Lock(session_id).acquire()
         self.providers = list(providers)
-        self.level = int(self.meta.get("level", 5))
-        self.config = Config()
-        # Claude resumes by cwd, so a session that moves directory loses its
-        # provider sessions. Pin the directory to the session the first time.
-        self.config.cwd = self.meta.get("cwd") or self.config.cwd
-        self.meta.set("cwd", self.config.cwd)
+        # Its own connection, opened when it is first needed. The daemon tells
+        # sessions apart by connection, so sharing one would mean two chats on
+        # the same id could not be told apart — or detached separately.
+        self.connection: Link | None = None
         self.events = Bus(on_error=self.handler_failed)
         self.log = Bus(on_error=self.log_failed)
-        self.inbox: queue.Queue = queue.Queue()
-        self.conductor: threading.Thread | None = None
-        self.runner = None
-        self.current = None  # the (provider, model, effort, config) the runner was built with
-        self.outbox: list[str] = []
-        self.in_turn = False
-        self.stopping = False
-        self.autoremove = True
-        self.state = IDLE
+        # Callbacks run on this session's own thread, in order, one at a time —
+        # so a slow handler holds up its own session and nobody else's.
+        self.inbox: queue.Queue[tuple[_LinkGeneration, dict] | None] = queue.Queue()
+        self.caller: threading.Thread | None = None
+        self.pending: list[tuple[str, object]] = []
+        self.opened = False
+        self._started = False
+        self.finished = False
+        self._start_lock = threading.RLock()
+        self._dispatch_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._generation: _LinkGeneration | None = None
+        self.state = {"status": IDLE, "seq": -1, "queued": 0, "in_turn": False}
+        self.seen = -1
+        # A daemon can stream an older CONFIG frame while the synchronous
+        # `send` request is in flight. Keep the accepted message locally busy
+        # until its START/INJECTED record arrives, so polling can never observe
+        # that stale frame as a false idle boundary.
+        self._awaiting: list[dict] = []
+
+    @property
+    def link(self) -> Link:
+        if self.connection is None or not self.connection.alive:
+            self.connection = Link.open()
+        return self.connection
 
     # ------------------------------------------------------------------ setup
 
     def active_inference_providers(self, providers: Sequence[str]) -> None:
         """Limit which providers this chat may use. Applied at the next turn boundary."""
         self.providers = list(providers)
-        self.note("providers", providers=self.providers)
+        self.change("providers", self.providers)
 
     def intelligence(self, level: int) -> None:
         """0-10 across every active provider. May change model *and* provider."""
-        self.level = int(level)
-        self.meta.set("level", self.level)
-        self.note("intelligence", level=self.level)
+        self.change("level", int(level))
 
     #: the spelling used in the README's example
     inteligence = intelligence
 
     def system_prompt(self, text: str) -> None:
         """Replace the provider's own session prompt."""
-        self.config.system_prompt = text
-        self.note("system_prompt", chars=len(text))
+        self.change("system_prompt", text)
 
     def system_prompt_file(self, path: str) -> None:
         self.system_prompt(open(path, encoding="utf-8").read())
 
     def append_system_prompt(self, text: str) -> None:
         """Keep the provider's prompt and add to it."""
-        self.config.append_system_prompt = text
-        self.note("append_system_prompt", chars=len(text))
+        self.change("append_system_prompt", text)
 
     def append_system_prompt_file(self, path: str) -> None:
         self.append_system_prompt(open(path, encoding="utf-8").read())
@@ -98,23 +139,23 @@ class Chat:
 
         Already the default; here so asking for it out loud still reads.
         """
-        self.config.disable_subagents = True
-        self.note("subagents", on=False)
+        self.change("subagents", False)
 
     def enable_subagents(self) -> None:
         """Let the provider spawn its own subagents. Off unless you ask."""
-        self.config.disable_subagents = False
-        self.note("subagents", on=True)
+        self.change("subagents", True)
 
     def disable_mcp(self) -> None:
         """No MCP servers, no external connectors. Already the default."""
-        self.config.disable_mcp = True
-        self.note("mcp", on=False)
+        self.change("mcp", False)
 
     def enable_mcp(self) -> None:
-        """Let the provider load its MCP servers and connectors. Off unless you ask."""
-        self.config.disable_mcp = False
-        self.note("mcp", on=True)
+        """Let the provider load its MCP servers and connectors. Off unless you ask.
+
+        Not every provider can honour it — codex is always jailed and agy has no
+        switch at all — and the one that cannot says so.
+        """
+        self.change("mcp", True)
 
     def disable_autoremoving_unauthenticated_providers(self) -> None:
         """Stop dropping a provider that loses its login mid-run.
@@ -124,18 +165,23 @@ class Chat:
         again over whoever is left. Turn it off and the auth error is reported
         and the turn simply ends.
         """
-        self.autoremove = False
-        self.note("autoremove_unauthenticated", on=False)
+        self.change("autoremove", False)
 
     def cwd(self, path: str) -> None:
         """Where the provider runs its tools.
 
-        Pinned to the session: Claude resumes by working directory, so moving a
-        session costs it Claude's own history and it gets seeded again.
+        Pinned to the session the first time, because Claude resumes by working
+        directory. Moving it mid-session ports the conversation to the new one.
         """
-        self.config.cwd = os.path.realpath(path)
-        self.meta.set("cwd", self.config.cwd)
-        self.note("cwd", cwd=self.config.cwd)
+        self.change("cwd", os.path.realpath(path))
+
+    def change(self, what: str, value) -> None:
+        """Ask for a setting. Held until ``start`` if the session is not open."""
+        if not self.opened or self.connection is None or not self.connection.alive:
+            self.opened = False
+            self.pending.append((what, value))
+            return
+        self.connection.call("set", session=self.session_id, what=what, value=value)
 
     # ------------------------------------------------------------- callbacks
 
@@ -151,12 +197,8 @@ class Chat:
         self.log.emit(self.blame(exc, fn))
 
     def log_failed(self, exc, fn, event) -> None:
-        """A broken log handler cannot be reported to the log handlers.
-
-        It goes straight to the session file instead, so the failure is on disk
-        rather than nowhere.
-        """
-        self.store.append(self.blame(exc, fn))
+        """A broken log handler cannot be reported to the log handlers."""
+        print(f"omni: log handler {getattr(fn, '__name__', fn)} raised {exc!r}")
 
     def blame(self, exc, fn) -> Event:
         return Event(
@@ -172,52 +214,250 @@ class Chat:
     @property
     def status(self) -> str:
         """``idle`` before start, then ``busy`` / ``waiting``, then ``stopped``."""
-        return self.state
+        with self._state_lock:
+            if self._awaiting:
+                return BUSY
+            return self.state.get("status", IDLE)
 
     @property
     def idle(self) -> bool:
-        """Waiting, with nothing left to process. What a polling loop should check."""
-        return self.state == WAITING and self.inbox.empty()
+        """Waiting, with no turn open. What a polling loop should check."""
+        with self._state_lock:
+            settled = (
+                not self._awaiting
+                and self.state.get("status") == WAITING
+                and not self.state.get("in_turn")
+            )
+        return settled and self.inbox.empty()
 
-    def start(self) -> "Chat":
-        if self.stopping or self.state == STOPPED:
-            raise RuntimeError(f"session {self.session_id!r} is stopped; load it again to continue")
-        if self.conductor and self.conductor.is_alive():
+    @property
+    def provider(self) -> str:
+        """Which provider is running this conversation right now."""
+        return self.state.get("provider", "")
+
+    @property
+    def model(self) -> str:
+        return self.state.get("model", "")
+
+    def start(self, since: int = 0) -> "Chat":
+        """Open the session and start hearing about it.
+
+        Everything asked for before this — providers, intelligence, prompts —
+        is applied here, in the order it was asked for.
+
+        ``since`` is the first ``event.seq`` to replay. The default is the whole
+        conversation, so a program that reconnects to a session sees everything
+        that happened while it was away. Pass ``-1`` to hear only what happens
+        from now on, or the seq after the last one you handled to pick up
+        exactly where you left off.
+        """
+        with self._start_lock:
+            since = int(since)
+            if self.finished:
+                raise RuntimeError(
+                    f"session {self.session_id!r} is stopped; load it again to continue"
+                )
+            if self.opened and self.connection is not None and self.connection.alive:
+                return self
+            self.opened = False
+
+            # Let replay frames collect in the inbox while ``open`` is in
+            # flight, then start callbacks only after the request succeeded.
+            # Besides making failed starts tidy, this means a replay callback
+            # can safely call back into ``start``/``send``: the chat is already
+            # open by the time user code runs.
+            connection = self.link
+            generation = _LinkGeneration()
+            self._generation = generation
+            connection.listen(
+                self.session_id,
+                lambda frame, generation=generation: self.arrived(frame, generation),
+            )
+            try:
+                result = connection.call(
+                    "open",
+                    session=self.session_id,
+                    providers=self.providers,
+                    cwd=os.getcwd(),
+                    value=[{"what": what, "value": value} for what, value in self.pending],
+                    **{"from": since},
+                )
+                with self._state_lock:
+                    self.state = result.get("snapshot") or self.state
+            except BaseException:
+                # ``open`` may have reached the daemon even if its reply did
+                # not reach us. Closing this connection makes the daemon drop
+                # any subscription it created, so a retry cannot hear every
+                # event twice.
+                connection.unlisten(self.session_id)
+                connection.close()
+                if self.connection is connection:
+                    self.connection = None
+                # A dispatcher may already be waiting on a replay frame this
+                # failed open received. Release it to discard that generation.
+                generation.ready.set()
+                raise
+
+            self.opened = True
+            self._started = True
+            self.pending.clear()
+            with self._state_lock:
+                # `seen` is the callback replay cursor, not merely the latest
+                # state the daemon reported. Positive replay ranges advance it
+                # only as their frames are delivered. A negative range skips
+                # history deliberately, so the snapshot becomes its baseline.
+                floor = int(self.state.get("seq", -1)) if since < 0 else since - 1
+                self.seen = max(self.seen, floor)
+            generation.accepted = True
+            generation.ready.set()
+            self.dispatching()
             return self
-        self.state = WAITING
-        self.conductor = threading.Thread(target=self.run, daemon=True, name=f"omni:{self.session_id}")
-        self.conductor.start()
-        self.inbox.put(("launch", None))
-        return self
 
     def send(self, text: str) -> None:
         """Send a message. Opens a turn, or lands inside the one already running.
 
-        Returns immediately; ``status`` flips to ``busy`` before it does, so a
+        Waits for the daemon to accept or reject the request, but not for model
+        output or the end of the turn. ``status`` flips to ``busy`` first, so a
         caller polling in a loop never sees a false lull.
         """
-        if self.stopping or self.state == STOPPED:
+        if self.finished:
             raise RuntimeError(f"session {self.session_id!r} is stopped; load it again to continue")
-        if self.state in (WAITING, BUSY):
-            self.state = BUSY
-        self.inbox.put(("send", text))
+        if not self.opened or self.connection is None or not self.connection.alive:
+            self.opened = False
+            # A detach or daemon restart resumes where this object left off.
+            # An explicit ``start()`` still honours its documented default and
+            # replays the whole conversation.
+            self.start(since=self.seen + 1)
+        with self._state_lock:
+            ticket = {
+                "text": text,
+                "after": max(self.seen, int(self.state.get("seq", -1))),
+            }
+            self._awaiting.append(ticket)
+            self.state["status"] = BUSY
+        try:
+            self.link.call("send", session=self.session_id, text=text)
+        except BaseException:
+            with self._state_lock:
+                if ticket in self._awaiting:
+                    self._awaiting.remove(ticket)
+            raise
 
     def stop(self) -> None:
-        """End the chat: the provider is shut down and the session id is released.
+        """End the chat: the providers are shut down and the session is closed.
 
-        Safe to call from inside an event handler — it will not wait on itself.
+        This is an instruction, not a disconnect. To leave a session running —
+        so the next program to open it finds the provider already warm — use
+        :meth:`detach` instead, or simply exit.
         """
-        if self.stopping:
+        if self.finished:
             return
-        self.stopping = True
-        running = self.conductor and self.conductor.is_alive()
-        if not running:
-            self.lock.release()  # never started, or already gone: let the id go
-        else:
-            self.inbox.put(("stop", None))
-            if self.conductor is not threading.current_thread():
-                self.conductor.join(timeout=30)
-        self.state = STOPPED
+
+        # A Chat that never opened has no remote lifecycle to acknowledge.
+        if not self._started:
+            self.finished = True
+            self.opened = False
+            self.settle_down()
+            with self._state_lock:
+                self._awaiting.clear()
+                self.state["status"] = STOPPED
+            if self.connection is not None:
+                self.connection.close()
+                self.connection = None
+            return
+
+        connection = self.connection
+        if connection is None or not connection.alive:
+            self._connection_lost(connection)
+            raise DaemonError(
+                f"cannot stop session {self.session_id!r}: the daemon connection is gone; "
+                "load the session and retry"
+            )
+        try:
+            connection.call("stop", session=self.session_id)
+        except Exception:
+            # A refusal is authoritative; a timeout is not. In both cases the
+            # caller must hear the error, and closing the subscription prevents
+            # an uncertain old link from continuing to mutate this object.
+            self._connection_lost(connection)
+            raise
+
+        # Only the daemon's acknowledgement makes this object terminal.
+        self.finished = True
+        self.opened = False
+        self.settle_down()
+        with self._state_lock:
+            self._awaiting.clear()
+            self.state["status"] = STOPPED
+        connection.close()
+        if self.connection is connection:
+            self.connection = None
+
+    def detach(self) -> None:
+        """Stop listening, and leave the session running in the daemon.
+
+        The conversation stays warm: its provider is still up, and opening the
+        same id again — from here or from another program — costs nothing.
+        """
+        if self.finished or not self.opened:
+            return
+
+        connection = self.connection
+        if connection is None or not connection.alive:
+            # A closed transport is already a definitive detach: the daemon
+            # identifies listeners by connection and cannot retain this one.
+            self._connection_lost(connection)
+            return
+        try:
+            connection.call("detach", session=self.session_id)
+        except Exception:
+            # Even if the request reached the daemon and only its reply was
+            # lost, closing the socket makes forgetting this listener certain.
+            self._connection_lost(connection)
+            raise
+
+        # Do not claim detachment until the daemon has acknowledged it.
+        self.opened = False
+        self.settle_down()
+
+    def _connection_lost(self, connection: Link | None) -> None:
+        """Make an uncertain lifecycle call safely retryable, without hiding it."""
+        self.opened = False
+        if connection is not None:
+            try:
+                connection.unlisten(self.session_id)
+            except Exception:
+                pass
+            try:
+                connection.close()
+            except Exception:
+                pass
+            if self.connection is connection:
+                self.connection = None
+        self.settle_down()
+        with self._state_lock:
+            self._awaiting.clear()
+            self.state["status"] = WAITING
+            self.state["in_turn"] = False
+
+    def refresh(self) -> dict:
+        """Ask the daemon where the session actually is, rather than trusting
+        the last thing it told us. Rarely needed; useful after a reconnect."""
+        if not self.opened or self.connection is None or not self.connection.alive:
+            self.start(since=self.seen + 1)
+        result = self.connection.call("status", session=self.session_id)
+        with self._state_lock:
+            self.state = result.get("snapshot") or self.state
+            return self.state.copy()
+
+    def history(self, since: int = 0) -> list[Event]:
+        """Every event this session has ever recorded, from ``since`` on.
+
+        Read straight out of the log, so it works whether or not the session is
+        open, and whoever wrote it.
+        """
+        result = self.link.call("events", session=self.session_id, **{"from": since})
+        return [Event.from_dict(item) for item in result.get("events", [])]
 
     def __enter__(self) -> "Chat":
         return self.start()
@@ -225,304 +465,124 @@ class Chat:
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    # -------------------------------------------------------------- conductor
+    # ----------------------------------------------------------- the stream
 
-    def run(self) -> None:
-        """The one thread that owns this chat's state."""
-        while True:
-            kind, payload = self.inbox.get()
-            try:
-                if kind == "stop":
-                    self.shutdown()
-                    return
-                if kind == "launch":
-                    self.rebuild()
-                elif kind == "send":
-                    self.dispatch(payload)
-                elif kind == "event":
-                    self.absorb(payload)
-            except Exception as exc:  # a bad turn must not kill the chat
-                self.record(Event(type=Event.ERROR, kind="omni", ok=False, error=repr(exc)))
-
-    def push(self, event: Event) -> None:
-        """Runners call this from their own threads; the conductor does the work."""
-        self.inbox.put(("event", event))
-
-    def absorb(self, event: Event) -> None:
-        self.record(event)
-        if self.stopping or self.straggler(event):
-            return  # still logged, but there is nothing left to react to
-        if event.type in MODEL_EVENTS:
-            self.state = BUSY
-        elif event.type == Event.END:
-            self.in_turn = False
-            self.finish_turn()
-        elif event.type == Event.ERROR and event.kind in FATAL:
-            self.fatal(event)
-
-    def straggler(self, event: Event) -> bool:
-        """Did this come from a provider omni has already moved on from?
-
-        A dying CLI reports the failure and the end of its turn in one breath.
-        By the time the second one is handled there may be a new provider up,
-        and applying it there would close a turn that is still open — or take
-        down the runner that has just taken over.
-        """
-        return bool(self.runner and event.provider and event.provider != self.runner.name)
-
-    def fatal(self, event: Event) -> None:
-        """An error that ends the turn: a crash, or a login that has gone."""
-        if event.kind == AUTH:
-            self.unauthenticated(event)
-        else:
-            self.collapse(event)
-
-    def collapse(self, event: Event) -> None:
-        """The provider died. Close the turn honestly and let the next send retry."""
-        self.close_turn(event.provider, {"crashed": True})
-
-    def unauthenticated(self, event: Event) -> None:
-        """A provider lost its login mid-run. Take it off the dial and move on.
-
-        The turn is over either way — an unauthenticated CLI cannot finish it.
-        What differs is the next one: by default that provider is dropped from
-        this chat and the same intelligence level is resolved again over the
-        providers that are left, so the conversation carries on somewhere else.
-        """
-        name = event.provider or (self.runner.name if self.runner else "")
-        self.close_turn(name, {"unauthenticated": name})
-        if not (self.autoremove and name in self.providers):
+    def arrived(
+        self, frame: dict, generation: _LinkGeneration | None = None
+    ) -> None:
+        """A line from the daemon about this session. Called on the link thread."""
+        generation = generation or self._generation
+        if generation is None:
             return
-        self.providers.remove(name)
-        account(name).forget()  # a login can come back; ask the CLI again next time
-        self.record(
-            Event(
-                type=Event.CONFIG,
-                text="provider_removed",
-                provider=name,
-                extra={"why": "unauthenticated", "left": list(self.providers)},
-            )
+        self.inbox.put((generation, frame))
+        # During open, frames intentionally collect until its reply succeeds.
+        # At every other time this also closes the tiny handoff window between
+        # a disconnecting dispatcher and its replacement.
+        if self.opened:
+            self.dispatching()
+
+    def dispatching(self) -> None:
+        with self._dispatch_lock:
+            self._dispatching_locked()
+
+    def _dispatching_locked(self) -> None:
+        if self.caller and self.caller.is_alive():
+            return
+        caller = threading.Thread(
+            target=self.deliver, daemon=True, name=f"omni:{self.session_id}"
         )
-        if not self.providers:
-            self.blocked("every provider is unauthenticated; log one back in and send again")
-            return
-        self.attempt("provider lost its login")
-        self.flush()
+        self.caller = caller
+        caller.start()
 
-    def close_turn(self, provider: str, extra: dict) -> None:
-        """Put the runner down and end the turn it was in the middle of."""
-        if self.runner:
-            self.meta.mark_synced(self.runner.name, self.store.seq)
-            self.runner.stop()
-            self.runner = None
-        if self.in_turn:
-            self.in_turn = False
-            self.record(Event(type=Event.END, provider=provider, extra=extra))
-        self.state = WAITING
-
-    def finish_turn(self) -> None:
-        self.state = WAITING
-        if self.runner:
-            self.meta.mark_synced(self.runner.name, self.store.seq)
-        if self.stale():
-            self.attempt("settings changed")
-        self.flush()
-
-    def dispatch(self, text: str) -> None:
-        """Queue a message, make sure something can carry it, then hand it over."""
-        self.outbox.append(text)
-        self.state = BUSY
-        if self.runner is None or not self.runner.alive:
-            self.attempt("no provider is running")
-        elif not self.in_turn and self.stale():
-            self.attempt("settings changed")  # between turns, so it can land now
-        self.flush()
-
-    def flush(self) -> None:
-        """Hand queued messages over — never to a runner we are about to replace.
-
-        A message is recorded only once the runner has taken it, so it is either
-        seeded into a provider or sent to one, and never both, and a send that
-        fails leaves the message queued rather than half-delivered.
-        """
-        if not (self.runner and self.runner.alive) or self.stale():
-            self.stranded()
-            return
-        while self.outbox:
-            text = self.outbox[0]
-            try:
-                self.runner.send(text)
-            except Exception as exc:
-                self.blocked(f"{self.runner.name} would not take the message: {exc!r}")
-                return
-            self.record(
-                Event(type=Event.START if not self.in_turn else Event.INJECTED, text=text)
-            )
-            self.outbox.pop(0)
-            self.in_turn = True
-            self.state = BUSY
-
-    def attempt(self, why: str) -> None:
-        """Bring a provider up, and survive it refusing to come up."""
+    def deliver(self) -> None:
+        """Hand events to callbacks, one at a time, in the order they happened."""
+        current = threading.current_thread()
         try:
-            self.rebuild()
-        except Exception as exc:
-            self.blocked(f"could not start a provider ({why}): {exc!r}")
+            while True:
+                arrived = self.inbox.get()
+                if arrived is None:
+                    return
+                generation, frame = arrived
+                # Synchronous open can receive replay before its reply. Do not
+                # expose those callbacks until success, and discard them if the
+                # open is refused.
+                generation.ready.wait()
+                with self._start_lock:
+                    if not generation.accepted or generation is not self._generation:
+                        continue
+                    if frame.get("stream") == "disconnected":
+                        # A dead daemon is not a stopped conversation. Its log
+                        # remains on disk for this object's next generation.
+                        self.opened = False
+                        with self._state_lock:
+                            self._awaiting.clear()
+                            self.state["status"] = WAITING
+                            self.state["in_turn"] = False
+                        return
+                    if frame.get("stream") == "gone":
+                        with self._state_lock:
+                            self._awaiting.clear()
+                            self.state = frame.get("snapshot") or self.state
+                            self.state["status"] = STOPPED
+                        self.opened = False
+                        self.finished = True
+                        return
+                    # The daemon says where the session stands as each event
+                    # goes out, so nothing here has to infer it a second time.
+                    event = Event.from_dict(frame.get("event") or {})
+                    with self._state_lock:
+                        self.state = frame.get("snapshot") or self.state
+                        if event.seq > self.seen:
+                            self.seen = event.seq
+                        if event.type in (Event.START, Event.INJECTED):
+                            for index, ticket in enumerate(self._awaiting):
+                                if (
+                                    event.seq > ticket["after"]
+                                    and event.text == ticket["text"]
+                                ):
+                                    self._awaiting.pop(index)
+                                    break
+                        elif (
+                            event.type == Event.ERROR
+                            and self.state.get("status") == WAITING
+                            and not self.state.get("in_turn")
+                        ):
+                            # The daemon accepted the request but could not hand
+                            # any queued message to a provider. No opening event
+                            # will arrive for those local busy tickets.
+                            self._awaiting.clear()
+                        stopped = self.state.get("status") == STOPPED
+                        if stopped:
+                            self._awaiting.clear()
+                    if stopped:
+                        self.opened = False
+                        self.finished = True
+                # Never hold the lifecycle lock across user code: reconnecting
+                # must not wait for a slow callback, and callbacks may themselves
+                # call start/send.
+                self.events.emit(event)
+                self.log.emit(event)
+        finally:
+            # Coordinate with `dispatching`: if start observed this thread just
+            # before it exited, hand ownership directly to a replacement.
+            with self._dispatch_lock:
+                if self.caller is current:
+                    self.caller = None
+                    if self.opened and not self.finished:
+                        self._dispatching_locked()
 
-    def stranded(self) -> None:
-        if self.outbox and not (self.runner and self.runner.alive):
-            self.blocked(f"nothing is running; {len(self.outbox)} message(s) still queued")
-
-    def blocked(self, why: str) -> None:
-        """Say what went wrong and go back to waiting, rather than hanging in 'busy'.
-
-        Queued messages stay queued: the next send retries the whole thing.
-        """
-        self.record(Event(type=Event.ERROR, kind=CRASH, ok=False, error=why))
-        self.state = WAITING
-
-    # ---------------------------------------------------------------- runners
-
-    def rung(self) -> dict:
-        return resolve(self.level, self.providers)
-
-    def signature(self, rung: dict) -> tuple:
-        return (rung["provider"], rung["model"], rung["effort"], tuple(sorted(asdict(self.config).items())))
-
-    def stale(self) -> bool:
-        """Has anything been asked for that the running CLI cannot honour?"""
-        return self.current is not None and self.current != self.signature(self.rung())
-
-    def tunable(self, rung: dict) -> bool:
-        """Is this only a model or effort change on the provider already running?"""
-        if not (self.current and self.runner and self.runner.alive):
-            return False
-        provider, model, effort, config = self.current
-        wanted = self.signature(rung)
-        return provider == wanted[0] and config == wanted[3] and (model, effort) != wanted[1:3]
-
-    def rebuild(self) -> None:
-        """Bring up the provider the current settings ask for. Turn boundaries only."""
-        rung = self.rung()
-        if self.tunable(rung) and self.runner.retune(rung["model"], rung["effort"]):
-            self.current = self.signature(rung)
-            self.record(
-                Event(
-                    type=Event.CONFIG,
-                    text="retune",
-                    provider=rung["provider"],
-                    model=rung["model"],
-                    extra={"effort": rung["effort"], "level": rung["level"]},
-                )
-            )
-            return
-        # ``current`` outlives the runner, so a provider that crashed or lost
-        # its login is still named as the one we came from.
-        previous = self.runner.name if self.runner else (self.current[0] if self.current else "")
-        if self.runner:
-            # Its ``synced`` mark stays where the last turn left it: anything
-            # recorded since then is exactly what it has to be told on the way back.
-            self.meta.bind(previous, self.runner.native_id)
-            self.runner.stop()
-            self.runner = None
-        if previous and previous != rung["provider"]:
-            self.record(
-                Event(
-                    type=Event.SWITCH_PROVIDER,
-                    provider=rung["provider"],
-                    model=rung["model"],
-                    extra={"from": previous, "to": rung["provider"], "level": rung["level"]},
-                )
-            )
-        self.launch(rung)
-
-    def launch(self, rung: dict) -> None:
-        native = self.meta.native(rung["provider"])
-        fresh = not native["id"]
-        config = replace(self.config, model=rung["model"] or "", effort=rung["effort"] or "")
-        runner = self.bring_up(rung, config, native["id"], native["synced"] + 1)
-        if native["id"] and runner.native_id != native["id"]:
-            # The provider no longer knows that session. Rather than carry on
-            # with half a conversation, start clean and tell it everything.
-            runner.stop()
-            self.record(
-                Event(
-                    type=Event.CONFIG,
-                    text="reseed",
-                    provider=rung["provider"],
-                    extra={"lost": native["id"], "now": runner.native_id},
-                )
-            )
-            runner = self.bring_up(rung, config, "", 0)
-            fresh = True
-        self.runner = runner
-        self.current = self.signature(rung)
-        self.meta.bind(rung["provider"], runner.native_id)
-        if runner.seeded:
-            self.meta.mark_synced(rung["provider"], self.store.seq)
-        self.record(
-            Event(
-                type=Event.CONFIG,
-                text="launch",
-                provider=rung["provider"],
-                model=rung["model"],
-                extra={"effort": rung["effort"], "level": rung["level"], "native": runner.native_id},
-            )
-        )
-        if fresh:
-            self.record(
-                Event(
-                    type=Event.NEW_SESSION,
-                    provider=rung["provider"],
-                    model=rung["model"],
-                    extra={"native": runner.native_id},
-                )
-            )
-
-    def bring_up(self, rung: dict, config, native_id: str, since: int):
-        runner = runner_for(rung["provider"])(self.session_id, config, self.push)
-        runner.start(native_id=native_id, history=self.store.history(since=since))
-        return runner
-
-    def shutdown(self) -> None:
-        self.stopping = True
-        if self.runner:
-            if self.in_turn:
-                self.runner.interrupt()  # ask nicely before closing the pipe
-            self.meta.bind(self.runner.name, self.runner.native_id)
-            self.runner.stop()
-            self.runner = None
-        self.drain()
-        self.record(Event(type=Event.CONFIG, text="stop"))
-        self.state = STOPPED
-        self.lock.release()
-
-    def drain(self) -> None:
-        """Whatever the provider said on its way out still belongs in the log."""
-        while True:
-            try:
-                kind, payload = self.inbox.get_nowait()
-            except queue.Empty:
-                return
-            if kind == "event":
-                self.record(payload)
-
-    # ----------------------------------------------------------------- record
-
-    def record(self, event: Event) -> Event:
-        """Persist, then tell everyone. The session file is the event log."""
-        event.session = event.session or self.session_id
-        if self.runner and not event.provider:
-            event.provider = self.runner.name
-            event.model = event.model or self.runner.config.model
-        self.store.append(event)
-        self.events.emit(event)
-        self.log.emit(event)
-        return event
-
-    def note(self, what: str, **extra) -> None:
-        """A settings change. Persisted and logged; applied at the next boundary."""
-        self.push(Event(type=Event.CONFIG, text=what, extra=extra))
+    def settle_down(self) -> None:
+        # Lifecycle methods must not start a daemon merely in order to leave
+        # it. In particular, ``stop`` and ``detach`` are harmless on a Chat
+        # whose first ``start`` failed.
+        if self.connection is not None:
+            self.connection.unlisten(self.session_id)
+        with self._state_lock:
+            self._awaiting.clear()
+        if self.caller and self.caller.is_alive():
+            self.inbox.put(None)
+            if self.caller is not threading.current_thread():
+                self.caller.join(timeout=5)
 
     def __repr__(self) -> str:
-        return f"<Chat {self.session_id} {self.state} level={self.level}>"
+        return f"<Chat {self.session_id} {self.status} provider={self.provider!r}>"

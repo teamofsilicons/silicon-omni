@@ -1,7 +1,9 @@
 # silicon omni
 
-One Python interface for **Claude Code**, **Codex** and **Antigravity** — driven by the
-subscriptions you already pay for, not API keys.
+One persistent interface for **Claude Code**, **Codex** and **Antigravity** — driven by
+the subscriptions you already pay for, not API keys. A small Rust daemon keeps the
+providers and conversations warm; Python, Rust, and the bundled terminal client all
+speak to it.
 
 ```python
 from omni import Inference, Event
@@ -19,7 +21,8 @@ chat.send("what changed in this repo today?")
 ```
 
 The interesting part is not that it wraps three CLIs. It is that a conversation can
-**move between them mid-flight** and carry on where it left off.
+**move between them over its lifetime**, survive the program that opened it, and carry
+on where it left off.
 
 ---
 
@@ -41,6 +44,13 @@ everything that came before already in its head.
 pip install silicon-omni
 ```
 
+The wheel includes `omni`, the terminal client, and `omnid`, the Rust daemon. The first
+operation that needs the daemon starts it automatically; later programs connect to the
+same Unix socket under `~/.omni`. There is no service to install and no API server to
+configure. Set `OMNI_HOME` to move all state, or `OMNI_DAEMON` to use a particular
+daemon binary while developing. Release wheels target manylinux 2.28 on x86_64 and
+aarch64, plus macOS on Intel and Apple silicon.
+
 Zero runtime dependencies. You bring the CLIs:
 
 | provider | CLI | check |
@@ -54,6 +64,63 @@ Inference.get_available_providers()   # ['claude', 'google', 'openai']
 ```
 
 Installed *and* logged in. Anything else is not offered.
+
+### Terminal and Rust clients
+
+The `omni` command installed by the Python wheel is the same socket client in a
+terminal. It starts `omnid` on first use, streams a turn as it happens, and detaches
+without cooling the provider. The two binaries can also be installed through Cargo:
+
+```bash
+cargo install omni-daemon silicon-omni-cli
+```
+
+```bash
+omni chat my-session
+omni send my-session "what changed in this repo today?"
+omni attach --from 42 my-session
+omni sessions
+omni providers
+omni dial claude openai
+omni account claude status
+omni daemon status
+```
+
+Every streaming command accepts `--json`. `omni help` lists session settings,
+account login, history, and daemon lifecycle commands. In a checkout, build both
+binaries with `cargo build --release -p omni-daemon -p silicon-omni-cli`.
+
+Rust programs use the synchronous `omni-client` crate. One connection multiplexes
+concurrent replies and any number of session streams; independent requests may finish
+out of order, while requests for the same session retain their wire order. `open`
+subscribes before it asks the daemon for replay, so an early frame cannot be lost:
+
+```bash
+cargo add omni-client
+```
+
+```rust
+use omni_client::{Client, OpenOptions, kind};
+
+let client = Client::connect()?;
+let mut chat = client.open(
+    OpenOptions::new("my-session")
+        .from_seq(-1)
+        .setting("level", 7),
+)?;
+chat.send("what changed in this repo today?")?;
+
+while let Some(event) = chat.recv()?.event {
+    if event.kind == kind::TEXT {
+        println!("{}", event.text);
+    }
+    if event.kind == kind::END {
+        break;
+    }
+}
+chat.detach()?;
+# Ok::<(), omni_client::Error>(())
+```
 
 ---
 
@@ -133,8 +200,15 @@ def handle(event):
 | `Event.INJECTED` | `text` — a message that landed mid-turn |
 | `Event.ERROR` | `error`, `kind` — `auth` / `limit` / `unavailable` / `crash` from the model or its CLI, plus `stderr` (CLI chatter), `omni` (the engine itself) and `handler` (your callback raised) |
 | `Event.SWITCH_PROVIDER` | `provider`, `extra['from']` |
-| `Event.NEW_SESSION` | `extra['native']` — the provider's own session id |
+| `Event.NEW_SESSION` | `provider`, `extra['native']` — the provider's own session id |
 | `Event.CONFIG` | `text` — a setting changed |
+
+Every serialized event carries `v`, `type`, and `at`. Events committed by the daemon
+also carry the omni `session` and a monotonic `seq`; conversational events carry a
+`turn` number beginning at zero. Schema version `v=1` is explicit on new records, and
+pre-versioned records are read as version 1. The optional `native` map preserves IDs
+reported by the provider — Claude message/tool IDs, Codex thread/turn/item IDs, or agy
+conversation/step IDs — without pretending those are portable across providers.
 
 Reasoning is deliberately contentless. A `THINKING` event says the model thought; it
 never says what. Provider reasoning is signed or encrypted, cannot be replayed anywhere
@@ -153,7 +227,10 @@ chat.send("...")
 
 Sends a message. If nothing is running it opens a turn. If a turn is already in flight
 it is **injected**: the provider picks it up at the next safe point, once the tool it is
-running has finished. Either way `send` returns immediately.
+running has finished. `send` returns only after the daemon has durably placed the
+message in the session's local pending FIFO. It does not wait for provider delivery,
+the model, a tool, or the end of the turn; a crash after success retries the accepted
+message when the session reopens.
 
 How you keep the process alive is your business. A loop:
 
@@ -171,6 +248,7 @@ while chat.status in ("busy", "waiting"):
 …or a subscription:
 
 ```python
+import asyncio
 import nats  # the example's dependency, not omni's
 
 stop_event = asyncio.Event()
@@ -178,10 +256,12 @@ stop_event = asyncio.Event()
 
 async def main():
     nc = await nats.connect("nats://localhost:4222")
-    chat.start()
+    await asyncio.to_thread(chat.start)
 
     async def on_msg(m):
-        chat.send(m.data.decode())      # opens a turn, or lands mid-flight
+        # send waits for daemon acceptance, so keep that socket round trip off
+        # an async event loop. It does not wait for the model's response.
+        await asyncio.to_thread(chat.send, m.data.decode())
         await m.ack()
 
     await nc.subscribe("agent.msgs", cb=on_msg)
@@ -191,12 +271,15 @@ async def main():
 asyncio.run(main())
 ```
 
-`chat.send` is thread-safe and never blocks, so omni does not care which one you pick.
-More in [`examples/`](examples/).
+`chat.send` is thread-safe. It can block while a daemon is starting, a session is
+opening, or the acceptance reply is in flight, so async applications should put it on a
+worker thread. More in [`examples/`](examples/).
 
 `status` is `idle` before `start`, then `busy` / `waiting`, then `stopped`. `chat.idle`
-is the one a polling loop wants: waiting, with nothing left to process. Sending to a
-stopped chat raises rather than dropping the message on the floor.
+means waiting with no turn open and no local callback left to deliver. A failed provider
+send can leave a message queued for a later retry even though no work is currently
+running; the accompanying `ERROR` explains that state. Sending to a stopped chat raises
+rather than dropping the message on the floor.
 
 ---
 
@@ -211,12 +294,27 @@ chat.system_prompt("...")
 chat.enable_subagents()
 ```
 
-Every one of those is recorded when you call it and **applied at the next turn
-boundary** — after the running tool finishes and the turn ends. A model never changes
-underneath itself.
+Every call queues a change. The conductor first writes the value to session metadata,
+then records a `CONFIG` event, and **applies it at the next turn boundary** — after the
+running tool finishes and the turn ends. Once that event is visible, the setting
+survives cold reaping and daemon restarts. A model never changes underneath itself.
 
-Calling any of them again overwrites the last value. Same for
-`load_or_create_session`: that is how a new session is started.
+Calling any of them again overwrites the last value. A non-empty provider list passed to
+`load_or_create_session` is an explicit setting too; omitting it restores the session's
+persisted list.
+
+### Working directory
+
+The first client to create a session pins its current working directory. Python sends
+`os.getcwd()` and the Rust/terminal clients default `OpenOptions` to their current
+directory. Reopening the session somewhere else does not silently move its tools.
+
+```python
+chat.cwd("/another/repository")
+```
+
+That explicit change is durable and takes effect at the next turn boundary, using the
+same reseed/resume rules as any other configuration change.
 
 ### Prompts and isolation
 
@@ -235,30 +333,81 @@ chat.enable_subagents()              # let the provider spawn its own
 chat.enable_mcp()                    # let it load MCP servers and connectors
 ```
 
+Not every provider can honour those. Codex is always jailed, so `enable_mcp()` does
+not reach it; agy has no switch for either. The provider that cannot say yes logs a
+`CONFIG`/`unsupported` event saying which of your settings it ignored — once, when you
+set it and when the conversation arrives there, rather than on every relaunch.
+
 Memory files are not a switch. `CLAUDE.md`, auto memory, org memory and `AGENTS.md`
 never load, whichever way the other two are set.
 
 ---
 
-## Sessions, and how switching works
+## Sessions, clients, and how switching works
 
 `~/.omni/sessions/{id}.jsonl` is the source of truth. It is the event log — the same
-objects your handlers see, appended in order. It outlives any single provider.
+objects your handlers see, appended in order. The daemon data-syncs an append before it
+publishes the event. A complete final JSON record without its newline is preserved; an
+invalid partial tail is truncated before the next append. Complete malformed lines,
+invalid events, sequence gaps, and foreign session ids stop that session instead of
+being silently skipped. The log outlives any single provider and any single Python
+process.
 
 ```python
 chat = Inference.load_or_create_session("nightly-triage")
 ```
 
-One live chat per session id. A second attempt raises `SessionBusy`; a lock whose owner
-died is reclaimed, so a crash never wedges a session shut.
+The daemon owns one live conversation per session id, and any number of clients may
+attach to it. Every attached client hears the same ordered event stream, and any of
+them may send:
 
-Alongside it, `{id}.meta.json` remembers each provider's **own** session and how far up
-the omni log it has already seen:
+```python
+first = Inference.load_or_create_session("nightly-triage").start()
+second = Inference.load_or_create_session("nightly-triage").start()
+
+first.send("from the worker")       # both clients hear the answer
+second.send("from the dashboard")  # either client can drive the chat
+```
+
+`chat.detach()` stops listening but leaves the provider hot. Reopening the id during
+the 15-minute idle grace period reconnects to the same running conversation. `stop()`
+is deliberately different: it ends the session and shuts its providers down. An open
+turn gets exactly one durable `END`; if the provider does not emit it while stopping,
+omni writes a synthetic one marked `interrupted` and `stopped`.
+
+By default `start()` replays the whole event log to a newly attached client. Pass the
+next sequence number you need to resume exactly, or `since=-1` to hear only new events:
+
+```python
+chat.start(since=last_seq + 1)
+watcher.start(since=-1)
+```
+
+Alongside it, `{id}.meta.json` atomically remembers durable chat settings plus each
+provider's **own** session and how far up the omni log it has already seen:
 
 ```json
-{"providers": {"claude": {"id": "3cb0…", "synced": 19},
-               "google": {"id": "1dbc…", "synced": 26}}}
+{"pending": [{"id": "8f91…", "text": "accepted, not delivered yet"}],
+ "providers": {"claude": {"id": "3cb0…", "synced": 19},
+               "google": {"id": "1dbc…", "synced": 26}},
+ "settings": {"cwd": "/work/nightly", "level": 7,
+              "active_providers": ["claude", "google"]}}
 ```
+
+`pending` is the transactional FIFO behind `send` acceptance. Its id is copied to
+`extra.message_id` on the durable `START` or `INJECTED` event that proves provider
+delivery, so crash recovery can reconcile identical messages without guessing by text.
+`synced` is a contiguous watermark, not merely the largest sequence observed; late
+output from a replaced runner leaves a hole that is supplied when that provider
+returns.
+
+State is private to the local account even under a permissive umask: omni-owned
+directories are mode `0700`, and the daemon socket, PID/log files, and session JSONL
+and metadata are forced to `0600`. Metadata replacement and newly created directory
+entries are synced as well as file contents. If history or metadata cannot be
+persisted, the session stops rather than publishing the change as durable. Existing
+malformed metadata or complete-line log corruption is retained for diagnosis and the
+session refuses to launch; it is never overwritten with empty state.
 
 So when a conversation moves:
 
@@ -329,7 +478,9 @@ Inference.openai.limits
 ```
 
 `used` is a fraction, `0.16` being 16%. `reset` is an RFC3339 UTC string from every
-provider — one of them answers in epoch seconds, and you never have to know which. `'unauthenticated'` if you are not signed in.
+provider — one of them answers in epoch seconds, and you never have to know which.
+Either can be `None`: some plans report no windows, and *nobody said* is not the same
+as *nothing spent*. `'unauthenticated'` if you are not signed in.
 Every provider is asked in a way that costs no tokens:
 
 | provider | how | note |
@@ -348,39 +499,52 @@ def log(event):
     write_somewhere(event.to_dict())
 ```
 
-Everything `on_event` sees, plus omni's own bookkeeping: every launch, model change,
-provider switch, new session, message in, tool call, error, stop. All of it is the same
-`Event` type, so it is parsable without a second schema, and it is the same thing that
-is already on disk in the session file.
+Both hooks receive the daemon's complete event stream: every launch, model change,
+provider switch, new session, message in, tool call, error, and stop. `logs` additionally
+receives a local `ERROR`/`handler` if one of this Python client's callbacks raises. All
+of it is the same `Event` type, so it is parsable without a second schema; daemon events
+are the same records already on disk in the session file. A delivered user message may
+carry `extra.message_id`, and output that arrived from a runner after replacement carries
+`extra.late=true`; private runner-routing epochs never leave the conductor.
 
 ---
 
 ## Per-provider notes
 
 **Claude Code** — flags do the work. Subagents and MCP are off by the command line
-unless a chat opts in; slash commands and memory files (`CLAUDE.md`, auto memory, org memory) are
-off unconditionally, so a run means the same thing on anyone's machine. Seeding is a file write into
-`~/.claude/projects/<slug>/<uuid>.jsonl`; resume then treats it as real history. Model
-and effort change over the control channel between turns, so re-tuning does not restart
+unless a chat opts in; slash commands and memory files (`CLAUDE.md`, auto memory, org
+memory) are off unconditionally, so a run means the same thing on anyone's machine.
+Seeding is a file write into `~/.claude/projects/<slug>/<uuid>.jsonl`; resume then treats
+it as real history. Claude's exact replayed-user echo is its delivery acknowledgement;
+unrelated control-channel replay text cannot open or reorder a turn. Unknown structured
+assistant blocks are retained as textual JSON rather than disappearing. Model and
+effort change over the control channel between turns, so re-tuning does not restart
 anything or re-read the conversation.
 
-**Codex** — the app server, not `exec`. It always runs against a `CODEX_HOME` of its own
-under `~/.omni/jails/`, holding exactly two things: a symlink to your real `auth.json`
-(linked, not copied, so a token refresh is not lost) and a near-empty `config.toml`.
+**Codex** — the app server, not `exec`. One warm app server can carry multiple omni
+sessions, routing notifications by Codex thread id. It always runs against a
+`CODEX_HOME` of its own under `~/.omni/jails/`, holding exactly two things: a symlink
+to your real `auth.json` (created even before a first login, and linked rather than
+copied so credentials and token refreshes persist) and a near-empty `config.toml`.
 That folder *is* the isolation — codex has nothing left to auto-load, so MCP servers,
 hooks and `AGENTS.md` never appear whether or not you asked. Skills live outside
-`CODEX_HOME` entirely, so they are switched off one at a time over the protocol.
+`CODEX_HOME` entirely, so they are switched off one at a time over the protocol; a
+failed listing or write is retried rather than remembered as success.
 `project_doc_max_bytes=0` goes on every launch, so opting back into subagents cannot
-smuggle somebody's `AGENTS.md` in with them. History is seeded with `thread/inject_items`; model and effort are per-turn
-parameters, so re-tuning is free.
+smuggle somebody's `AGENTS.md` in with them. History is seeded with
+`thread/inject_items`; a forgotten thread is replaced and fully reseeded. Model and
+effort are per-turn parameters, so re-tuning is free.
+
 **Antigravity** — the most restricted. There is no flag for MCP, no flag for subagents,
 and no way to seed history, so omni lets it load what it wants and folds prior
 conversation into the front of the next message — one turn, not two. Neither isolation
-switch can be honoured here; omni logs a `CONFIG` event saying so rather than pretending. An injected message runs as its own turn instead of joining the one in
-flight, and there is no way to interrupt agy at all. Its cold start is
-~10s per launch. An unrecognised conversation id makes agy silently start a new one, so
-omni checks the id it gets back and re-seeds from the top if it was not the one it asked
-for.
+switch can be honoured here; omni logs a `CONFIG` event saying so rather than
+pretending. Replacement and appended system prompts are both folded into that text, in
+order. An injected message runs as its own native turn instead of joining the one in
+flight, and there is no way to interrupt agy at all. Its cold start is ~10s per launch,
+and startup is not accepted until agy reports a resumable conversation id. An
+unrecognised conversation id makes agy silently start a new one, so omni checks the id
+it gets back and re-seeds from the top if it was not the one it asked for.
 
 ---
 
@@ -391,25 +555,29 @@ for.
 - **Tools are observed, not defined.** omni does not install tools into a provider or
   rename theirs. Whatever the CLI does, omni reports.
 - **One account per provider.** No multi-account support.
-- **A switch is a real restart** of the provider process, so it costs the destination a
-  context read. Model changes within a provider do not.
+- **A switch may cost a context read.** Providers that can be caught up in place stay
+  parked and warm. Claude must restart when it missed history; model changes within a
+  provider are re-tuned where its protocol permits.
 
 ---
 
 ## Contributing
 
-`omni/` is small on purpose and split the way the problem is:
+The public Python package is intentionally thin. The daemon and provider protocols live
+in Rust:
 
 ```
 omni/
-  events.py        the vocabulary — one type for everything
-  chat.py          the engine: one conductor thread, turn boundaries, switching
-  inference.py     the front door
-  translate.py     history → something a foreign provider can read
-  session/         the log, the provider map, the one-owner lock
-  intelligence/    the 0-10 dial and its ladder
-  providers/       claude/ · openai/ · google/, plus the contract they share
-  shared/          paths, jsonl, clock, callback bus, subprocess plumbing
+  chat.py          Python session handle and callback delivery
+  client/          Unix-socket transport and automatic daemon startup
+  events.py        Python view of the shared event vocabulary
+  inference.py     the front door: sessions, accounts, providers, dial
+  providers/test.py  control surface for the shipped test provider
+crates/
+  omni-core/       conductor, sessions, translation, and provider adapters
+  omni-daemon/     session registry and NDJSON-over-Unix-socket server
+  omni-client/     multiplexed synchronous Rust daemon client
+  omni-cli/        terminal client and streaming chat UI
 ```
 
 The dial, the landing page and the reference live in
@@ -417,13 +585,15 @@ The dial, the landing page and the reference live in
 exist is that repo's problem; running them is this one's.
 
 Adding a provider means an `Account` and a `Runner` — see
-[`omni/providers/base.py`](omni/providers/base.py), then `providers.register(...)`.
+[`crates/omni-core/src/providers/base.rs`](crates/omni-core/src/providers/base.rs) and
+the three adapters beside it.
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the pieces are shaped this way.
 
 ```bash
-pytest                        # fast, no CLI needed
-pytest -m live                # drives the real CLIs; needs auth, spends a little quota
-python3 scripts/cleanup.py    # afterwards: takes the live sessions back out of ~/.omni
+cargo test --workspace        # core, adapters, protocol, conductor
+pytest                        # Python through a real daemon; no vendor CLI needed
+pytest -m live                # real CLIs; needs auth and spends a little quota
+python3 scripts/cleanup.py    # afterwards: takes live-test sessions out of ~/.omni
 ```
 
 Live tests deliberately run against your real `~/.omni`, because a test that uses
@@ -447,5 +617,20 @@ chat.send("[recall]")         # -> everything it has been told, seeded history i
 
 It is not registered until you call `install()`, so it can never appear in
 `get_available_providers()` by accident.
+
+For the unhappy paths, `test.running()` hands you the live runner. It records what it
+was seeded with and what it was sent, and it can be driven by hand:
+
+```python
+test.install("alpha", "beta")            # two of them, so you can test a switch
+test.running("alpha").autoreply = False  # hold the turn open
+chat.send("hello")
+test.running("alpha").fail("auth")       # now lose the login
+```
+
+Each knob mimics something a real CLI does. `defer` is agy, which only sees history when
+the next message goes out. `tunable = False` is agy again, which cannot change model
+without a restart. A native id starting with `gone-` is any provider that has forgotten a
+session omni thinks it still has.
 
 MIT.
