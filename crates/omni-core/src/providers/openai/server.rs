@@ -410,8 +410,8 @@ mod tests {
         assert_eq!(heard[0].0, "thread-a");
         assert_eq!(heard[1].0, "thread-b");
         for (_, event) in heard {
-            assert!(event.is(crate::events::kind::ERROR));
-            assert_eq!(event.fault, CRASH);
+            assert!(event.is(crate::events::event_type::ERROR));
+            assert_eq!(event.kind, CRASH);
             assert_eq!(event.provider, super::super::NAME);
             assert_eq!(event.extra[GENERATION], 17);
             assert!(event.error.contains("exited unexpectedly with 9"));

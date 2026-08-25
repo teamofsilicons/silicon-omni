@@ -124,7 +124,7 @@ def start(timeout: float = STARTUP) -> Path:
 
 
 def stop() -> bool:
-    """Ask the daemon to shut down. Mostly for tests and `omni daemon stop`."""
+    """Ask the daemon to shut down. Mostly for tests and `so daemon stop`."""
     from .link import Link
 
     try:

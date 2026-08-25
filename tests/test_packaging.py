@@ -11,7 +11,11 @@ class Executed(Exception):
     """Stand in for a successful exec, which never returns."""
 
 
-def test_console_script_execs_the_bundled_terminal_client(monkeypatch):
+@pytest.mark.parametrize(
+    ("entrypoint", "name"),
+    [(cli.main, "silicon-omni"), (cli.short, "so")],
+)
+def test_console_script_execs_the_bundled_terminal_client(monkeypatch, entrypoint, name):
     seen = {}
 
     def execute(path, argv):
@@ -21,13 +25,13 @@ def test_console_script_execs_the_bundled_terminal_client(monkeypatch):
         raise Executed
 
     monkeypatch.setattr(os, "execv", execute)
-    monkeypatch.setattr(sys, "argv", ["/a/venv/bin/omni", "send", "chat", "hello"])
+    monkeypatch.setattr(sys, "argv", [f"/a/venv/bin/{name}", "send", "chat", "hello"])
     monkeypatch.setenv("OMNI_WRAPPER_TEST", "preserved")
 
     with pytest.raises(Executed):
-        cli.main()
+        entrypoint()
 
-    binary = Path(cli.__file__).with_name("bin") / "omni"
+    binary = Path(cli.__file__).with_name("bin") / name
     assert seen == {
         "path": str(binary),
         "argv": [str(binary), "send", "chat", "hello"],
@@ -35,11 +39,15 @@ def test_console_script_execs_the_bundled_terminal_client(monkeypatch):
     }
 
 
-def test_console_script_reports_an_exec_failure(monkeypatch):
+@pytest.mark.parametrize(
+    ("entrypoint", "name"),
+    [(cli.main, "silicon-omni"), (cli.short, "so")],
+)
+def test_console_script_reports_an_exec_failure(monkeypatch, entrypoint, name):
     def fail(path, argv):
         raise OSError("not executable")
 
     monkeypatch.setattr(os, "execv", fail)
 
-    with pytest.raises(SystemExit, match="cannot execute bundled terminal client"):
-        cli.main()
+    with pytest.raises(SystemExit, match=rf"^{name}: cannot execute bundled terminal client"):
+        entrypoint()

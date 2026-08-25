@@ -194,13 +194,13 @@ pub const OPS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::kind;
+    use crate::events::event_type;
 
     fn snap() -> Snapshot {
         Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            level: 5,
+            intelligence: 5,
             providers: vec![],
             provider: String::new(),
             model: String::new(),
@@ -230,7 +230,8 @@ mod tests {
     fn a_reply_and_a_frame_are_told_apart_by_shape() {
         let reply = serde_json::to_string(&Reply::ok(7, serde_json::json!({"a": 1}))).unwrap();
         let frame =
-            serde_json::to_string(&Frame::event("demo", Event::new(kind::TEXT), snap())).unwrap();
+            serde_json::to_string(&Frame::event("demo", Event::new(event_type::TEXT), snap()))
+                .unwrap();
         assert!(matches!(read_line(&reply), Some(Incoming::Reply(r)) if r.id == 7));
         assert!(matches!(read_line(&frame), Some(Incoming::Frame(f)) if f.stream == "event"));
     }
@@ -260,7 +261,7 @@ mod tests {
 
     #[test]
     fn an_event_survives_the_round_trip_whole() {
-        let mut event = Event::new(kind::TOOL_CALL);
+        let mut event = Event::new(event_type::TOOL_CALL);
         event.tool = "Bash".into();
         event.args.insert("command".into(), serde_json::json!("ls"));
         event.seq = 12;

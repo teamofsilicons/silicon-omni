@@ -22,7 +22,7 @@ from .client import DaemonError
 from .events import Event
 from .inference import Inference, NoDial
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 class SessionBusy(RuntimeError):

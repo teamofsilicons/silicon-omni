@@ -165,18 +165,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
 
 [[package]]
-name = "omni-client"
-version = "0.4.0"
-dependencies = [
- "libc",
- "omni-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "omni-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "serde",
@@ -188,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "omni-daemon"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "omni-core",
@@ -370,11 +360,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "silicon-omni-cli"
-version = "0.4.0"
+name = "silicon-omni"
+version = "0.5.0"
 dependencies = [
- "omni-client",
+ "libc",
+ "omni-core",
+ "serde",
  "serde_json",
+]
+
+[[package]]
+name = "silicon-omni-cli"
+version = "0.5.0"
+dependencies = [
+ "serde_json",
+ "silicon-omni",
 ]
 
 [[package]]

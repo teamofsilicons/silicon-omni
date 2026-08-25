@@ -1,38 +1,45 @@
-//! `omni` — a thin terminal client for `omnid`.
+//! `silicon-omni` / `so` — thin terminal clients for `omnid`.
 
 use std::fmt;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
 
-use omni_client::{Client, Event, Frame, OpenOptions, Request, Session, Snapshot, kind};
 use serde_json::{Value, json};
+use silicon_omni::{Client, Event, Frame, OpenOptions, Request, Session, Snapshot, event_type};
 
-const HELP: &str = r#"omni — one conversation across Claude, Codex, and Antigravity
+const HELP: &str = r#"silicon-omni (so) — one conversation across Claude, Codex, and Antigravity
 
 Usage:
-  omni chat [OPTIONS] SESSION [MESSAGE...]    interactive or one-turn chat
-  omni send [OPTIONS] SESSION MESSAGE...      send and stream until settled
-  omni attach [OPTIONS] SESSION               replay/follow a session
-  omni events [--from SEQ] [--json] SESSION   read persisted events once
-  omni status SESSION                         show a live session snapshot
-  omni sessions                               list live sessions
-  omni stop SESSION                           stop a live session
-  omni set SESSION SETTING VALUE              queue a setting change
-  omni providers [PROVIDER...]                list available providers
-  omni dial [PROVIDER...]                     show the 0–10 intelligence dial
-  omni account PROVIDER ACTION [CODE]          account status/login/limits
-  omni daemon start|status|stop                manage the persistent daemon
-  omni ping                                    show daemon information
-  omni request OP [JSON]                       make a low-level protocol call
+  silicon-omni chat [OPTIONS] SESSION [MESSAGE...]    interactive or one-turn chat
+  silicon-omni send [OPTIONS] SESSION MESSAGE...      send and stream until settled
+  silicon-omni logs [OPTIONS] SESSION                 replay/follow a session
+  silicon-omni history [--since SEQ] [--json] SESSION read persisted events once
+  silicon-omni status SESSION                         show a live session snapshot
+  silicon-omni sessions                               list live sessions
+  silicon-omni stop SESSION                           stop a live session
+  silicon-omni set SESSION SETTING VALUE              queue a setting change
+  silicon-omni providers [PROVIDER...]                list available providers
+  silicon-omni dial [PROVIDER...]                     show the 0–10 intelligence dial
+  silicon-omni account PROVIDER ACTION [CODE]         inspect or authenticate an account
+  silicon-omni daemon start|status|stop               manage the persistent daemon
+  silicon-omni ping                                   show daemon information
+  silicon-omni request OP [JSON]                      make a low-level protocol call
+
+Every command is also available through the short `so` executable.
 
 Stream options:
-  --from SEQ          first event sequence to replay (send/chat default: -1)
+  --since SEQ         first event sequence to replay (send/chat default: -1)
   --providers A,B     limit providers when opening the session
-  --level 0..10       set intelligence as part of opening
-  --json              emit machine-readable JSON lines
+  --intelligence 0..10
+                      set intelligence as part of opening
+  --json              emit Events as JSON lines
+  --frames            emit raw transport Frames as JSON lines
+
+Compatibility aliases:
+  attach = logs, events = history, --from = --since, --level = --intelligence
 
 Account actions:
-  status (default), installed, limits, login, finish CODE, forget
+  status (default), installed, limits, start-auth, finish-auth CODE, forget
 
 Environment:
   OMNI_HOME           state directory (default: ~/.omni)
@@ -51,8 +58,8 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
-impl From<omni_client::Error> for CliError {
-    fn from(error: omni_client::Error) -> Self {
+impl From<silicon_omni::Error> for CliError {
+    fn from(error: silicon_omni::Error) -> Self {
         CliError(error.to_string())
     }
 }
@@ -71,9 +78,16 @@ impl From<io::Error> for CliError {
 
 type Result<T> = std::result::Result<T, CliError>;
 
-fn main() {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Output {
+    Human,
+    Json,
+    Frames,
+}
+
+pub fn main() {
     if let Err(error) = run(std::env::args().skip(1).collect()) {
-        eprintln!("omni: {error}");
+        eprintln!("silicon-omni: {error}");
         std::process::exit(1);
     }
 }
@@ -86,15 +100,17 @@ fn run(mut args: Vec<String>) -> Result<()> {
     args.remove(0);
     match command.as_str() {
         "help" | "-h" | "--help" => print!("{HELP}"),
-        "version" | "-V" | "--version" => println!("omni {}", env!("CARGO_PKG_VERSION")),
+        "version" | "-V" | "--version" => {
+            println!("silicon-omni {}", env!("CARGO_PKG_VERSION"))
+        }
         "ping" => print_value(&serde_json::to_value(Client::connect()?.ping()?)?),
         "daemon" => daemon(args)?,
         "providers" => providers(args)?,
         "dial" => dial(args)?,
         "sessions" => sessions(no_args(command, args)?)?,
         "status" => status(one_arg(command, args)?)?,
-        "events" => events(args)?,
-        "attach" => attach(args)?,
+        "history" | "events" => history(args)?,
+        "logs" | "attach" => logs(args)?,
         "send" => stream(args, false)?,
         "chat" => stream(args, true)?,
         "stop" => stop(one_arg(command, args)?)?,
@@ -103,7 +119,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
         "request" => request(args)?,
         other => {
             return Err(CliError(format!(
-                "unknown command {other:?}; try `omni help`"
+                "unknown command {other:?}; try `silicon-omni help`"
             )));
         }
     }
@@ -135,7 +151,7 @@ fn daemon(mut args: Vec<String>) -> Result<()> {
         "stop" => match Client::connect_existing() {
             Ok(client) => {
                 client.shutdown()?;
-                if omni_client::wait_until_stopped(Duration::from_secs(90)) {
+                if silicon_omni::wait_until_stopped(Duration::from_secs(90)) {
                     println!("stopped");
                 } else {
                     return Err(CliError("daemon did not stop within 90s".into()));
@@ -165,10 +181,10 @@ fn dial(args: Vec<String>) -> Result<()> {
     reject_options(&args)?;
     let only = (!args.is_empty()).then_some(args);
     let table = Client::connect()?.dial(only)?;
-    println!("level  provider  model  effort");
-    for (level, rung) in table.iter().rev() {
+    println!("intelligence  provider  model  effort");
+    for (intelligence, rung) in table.iter().rev() {
         println!(
-            "{level:>5}  {:<8}  {}  {}",
+            "{intelligence:>12}  {:<8}  {}  {}",
             rung.provider, rung.model, rung.effort
         );
     }
@@ -180,12 +196,17 @@ fn sessions(_: ()) -> Result<()> {
     if sessions.is_empty() {
         return Ok(());
     }
-    println!("session\tstatus\tprovider\tmodel\tlevel\tlisteners");
+    println!("session\tstatus\tprovider\tmodel\tintelligence\tlisteners");
     for live in sessions {
         let state = live.snapshot;
         println!(
             "{}\t{}\t{}\t{}\t{}\t{}",
-            state.session, state.status, state.provider, state.model, state.level, live.listeners
+            state.session,
+            state.status,
+            state.provider,
+            state.model,
+            state.intelligence,
+            live.listeners
         );
     }
     Ok(())
@@ -193,27 +214,27 @@ fn sessions(_: ()) -> Result<()> {
 
 fn status(session: String) -> Result<()> {
     let (snapshot, listeners) = Client::connect()?.status(&session)?;
-    print_value(&json!({"snapshot": snapshot, "listeners": listeners}));
+    print_value(&json!({"snapshot": public_snapshot(&snapshot), "listeners": listeners}));
     Ok(())
 }
 
-fn events(mut args: Vec<String>) -> Result<()> {
-    let json = take_flag(&mut args, "--json");
-    let from = take_i64(&mut args, "--from")?.unwrap_or(0);
-    let session = one_arg("events", args)?;
-    for event in Client::connect()?.events(&session, from)? {
-        print_event(&event, json)?;
+fn history(mut args: Vec<String>) -> Result<()> {
+    let output = output(&mut args, false)?;
+    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(0);
+    let session = one_arg("history", args)?;
+    for event in Client::connect()?.events(&session, since)? {
+        print_event(&event, output)?;
     }
     Ok(())
 }
 
-fn attach(mut args: Vec<String>) -> Result<()> {
-    let json = take_flag(&mut args, "--json");
-    let from = take_i64(&mut args, "--from")?.unwrap_or(0);
+fn logs(mut args: Vec<String>) -> Result<()> {
+    let output = output(&mut args, true)?;
+    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(0);
     let providers = take_providers(&mut args)?;
-    let session_id = one_arg("attach", args)?;
+    let session_id = one_arg("logs", args)?;
     let client = Client::connect()?;
-    let mut options = OpenOptions::new(&session_id).from_seq(from);
+    let mut options = OpenOptions::new(&session_id).from_seq(since);
     if let Some(providers) = providers {
         options = options.providers(providers);
     }
@@ -221,7 +242,7 @@ fn attach(mut args: Vec<String>) -> Result<()> {
     loop {
         let frame = session.recv()?;
         let gone = frame.stream == "gone";
-        print_frame(&frame, json)?;
+        print_frame(&frame, output)?;
         if gone {
             break;
         }
@@ -231,11 +252,11 @@ fn attach(mut args: Vec<String>) -> Result<()> {
 }
 
 fn stream(mut args: Vec<String>, interactive: bool) -> Result<()> {
-    let json = take_flag(&mut args, "--json");
-    let from = take_i64(&mut args, "--from")?.unwrap_or(-1);
-    let level = take_i64(&mut args, "--level")?;
-    if level.is_some_and(|level| !(0..=10).contains(&level)) {
-        return Err(CliError("--level must be between 0 and 10".into()));
+    let output = output(&mut args, true)?;
+    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(-1);
+    let intelligence = take_aliased_i64(&mut args, "--intelligence", "--level")?;
+    if intelligence.is_some_and(|intelligence| !(0..=10).contains(&intelligence)) {
+        return Err(CliError("--intelligence must be between 0 and 10".into()));
     }
     let providers = take_providers(&mut args)?;
     reject_options(&args)?;
@@ -253,32 +274,32 @@ fn stream(mut args: Vec<String>, interactive: bool) -> Result<()> {
     }
 
     let client = Client::connect()?;
-    let mut options = OpenOptions::new(session_id).from_seq(from);
+    let mut options = OpenOptions::new(session_id).from_seq(since);
     if let Some(providers) = providers {
         options = options.providers(providers);
     }
-    if let Some(level) = level {
-        options = options.setting("level", level);
+    if let Some(intelligence) = intelligence {
+        options = options.setting("intelligence", intelligence);
     }
     let mut session = client.open(options)?;
 
     // `open` may replay before its reply. Show those frames now so an old END
     // cannot be mistaken for the boundary of the message about to be sent.
     for _ in 0..session.opened().replayed {
-        print_frame(&session.recv()?, json)?;
+        print_frame(&session.recv()?, output)?;
     }
 
     if !initial.is_empty() {
-        send_and_wait(&session, &initial, json)?;
+        send_and_wait(&session, &initial, output)?;
     }
     if interactive {
-        repl(&session, json)?;
+        repl(&session, output)?;
     }
     session.detach()?;
     Ok(())
 }
 
-fn repl(session: &Session, json: bool) -> Result<()> {
+fn repl(session: &Session, output: Output) -> Result<()> {
     let terminal = io::stdin().is_terminal();
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
@@ -298,12 +319,12 @@ fn repl(session: &Session, json: bool) -> Result<()> {
         if matches!(text, "/quit" | "/exit") {
             break;
         }
-        send_and_wait(session, text, json)?;
+        send_and_wait(session, text, output)?;
     }
     Ok(())
 }
 
-fn send_and_wait(session: &Session, text: &str, json: bool) -> Result<()> {
+fn send_and_wait(session: &Session, text: &str, output: Output) -> Result<()> {
     if !session.send(text)? {
         return Err(CliError("daemon did not accept the message".into()));
     }
@@ -313,13 +334,16 @@ fn send_and_wait(session: &Session, text: &str, json: bool) -> Result<()> {
         let frame = session.recv()?;
         let event = frame.event.as_ref();
         if event.is_some_and(|event| {
-            matches!(event.kind.as_str(), kind::START | kind::INJECTED) && event.text == text
+            matches!(
+                event.event_type.as_str(),
+                event_type::START | event_type::INJECTED
+            ) && event.text == text
         }) {
             acknowledged = true;
         }
         if let Some(error) = event.filter(|event| {
-            event.kind == kind::ERROR
-                && event.fault != "stderr"
+            event.event_type == event_type::ERROR
+                && event.kind != "stderr"
                 && event.extra.get("willRetry").and_then(Value::as_bool) != Some(true)
         }) {
             failure = Some(if error.error.is_empty() {
@@ -334,7 +358,7 @@ fn send_and_wait(session: &Session, text: &str, json: bool) -> Result<()> {
         let terminal_error = failed_attempt(event, frame.snapshot.as_ref());
         let settled_after_message = acknowledged && settled(frame.snapshot.as_ref());
         let gone = frame.stream == "gone";
-        print_frame(&frame, json)?;
+        print_frame(&frame, output)?;
         if terminal_error {
             return Err(CliError(
                 failure.unwrap_or_else(|| "the message could not be delivered".into()),
@@ -360,7 +384,7 @@ fn settled(snapshot: Option<&Snapshot>) -> bool {
 }
 
 fn failed_attempt(event: Option<&Event>, snapshot: Option<&Snapshot>) -> bool {
-    event.is_some_and(|event| event.kind == kind::ERROR)
+    event.is_some_and(|event| event.event_type == event_type::ERROR)
         && snapshot.is_some_and(|state| {
             !state.in_turn && matches!(state.status.as_str(), "waiting" | "stopped")
         })
@@ -384,7 +408,7 @@ fn set(mut args: Vec<String>) -> Result<()> {
         return Err(CliError("set needs SESSION SETTING VALUE".into()));
     }
     let session = args.remove(0);
-    let what = args.remove(0);
+    let what = canonical_setting(&args.remove(0));
     let value = parse_setting(&what, &args.join(" "))?;
     if Client::connect()?.set(&session, &what, value)? {
         println!("accepted");
@@ -409,11 +433,11 @@ fn account(mut args: Vec<String>) -> Result<()> {
         "status" => ("auth_status", None),
         "installed" => ("installed", None),
         "limits" => ("limits", None),
-        "login" | "start" => ("start_auth", None),
-        "finish" => {
+        "start-auth" | "login" | "start" => ("start_auth", None),
+        "finish-auth" | "finish" => {
             if args.is_empty() {
                 return Err(CliError(
-                    "account finish needs a code or redirect URL".into(),
+                    "account finish-auth needs a code or redirect URL".into(),
                 ));
             }
             ("finish_auth", Some(args.join(" ")))
@@ -421,7 +445,7 @@ fn account(mut args: Vec<String>) -> Result<()> {
         "forget" => ("forget", None),
         other => {
             return Err(CliError(format!(
-                "unknown account action {other:?}; use status, installed, limits, login, finish, or forget"
+                "unknown account action {other:?}; use status, installed, limits, start-auth, finish-auth, or forget"
             )));
         }
     };
@@ -457,53 +481,61 @@ fn request(mut args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn print_frame(frame: &Frame, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string(frame)?);
-    } else if let Some(event) = frame.event.as_ref() {
-        print_event(event, false)?;
-    } else if frame.stream == "gone" {
-        eprintln!("[session stopped]");
+fn print_frame(frame: &Frame, output: Output) -> Result<()> {
+    match output {
+        Output::Frames => println!("{}", serde_json::to_string(frame)?),
+        Output::Json => {
+            if let Some(event) = frame.event.as_ref() {
+                print_event(event, Output::Json)?;
+            }
+        }
+        Output::Human => {
+            if let Some(event) = frame.event.as_ref() {
+                print_event(event, Output::Human)?;
+            } else if frame.stream == "gone" {
+                eprintln!("[session stopped]");
+            }
+        }
     }
     Ok(())
 }
 
-fn print_event(event: &Event, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string(event)?);
+fn print_event(event: &Event, output: Output) -> Result<()> {
+    if output != Output::Human {
+        println!("{}", serde_json::to_string(&public_event(event))?);
         return Ok(());
     }
-    match event.kind.as_str() {
-        kind::TEXT => {
+    match event.event_type.as_str() {
+        event_type::TEXT => {
             println!("{}", event.text);
             io::stdout().flush()?;
         }
-        kind::START => eprintln!("> {}", event.text),
-        kind::INJECTED => eprintln!(">> {}", event.text),
-        kind::THINKING => eprintln!("[thinking]"),
-        kind::TOOL_CALL => eprintln!(
+        event_type::START => eprintln!("> {}", event.text),
+        event_type::INJECTED => eprintln!(">> {}", event.text),
+        event_type::THINKING => eprintln!("[thinking]"),
+        event_type::TOOL_CALL => eprintln!(
             "[tool {} {}]",
             event.tool,
             serde_json::to_string(&event.args)?
         ),
-        kind::TOOL_RESULT => eprintln!(
+        event_type::TOOL_RESULT => eprintln!(
             "[tool {} {}]",
             event.tool,
             if event.ok { "ok" } else { "failed" }
         ),
-        kind::ERROR => eprintln!(
+        event_type::ERROR => eprintln!(
             "[error{}] {}",
-            if event.fault.is_empty() {
+            if event.kind.is_empty() {
                 String::new()
             } else {
-                format!("/{}", event.fault)
+                format!("/{}", event.kind)
             },
             event.error
         ),
-        kind::SWITCH_PROVIDER => eprintln!("[provider → {}]", event.provider),
-        kind::NEW_SESSION => eprintln!("[new native session: {}]", event.provider),
-        kind::CONFIG => eprintln!("[config: {}]", event.text),
-        kind::END => {}
+        event_type::SWITCH_PROVIDER => eprintln!("[provider → {}]", event.provider),
+        event_type::NEW_SESSION => eprintln!("[new native session: {}]", event.provider),
+        event_type::CONFIG => eprintln!("[config: {}]", event.text),
+        event_type::END => {}
         other => eprintln!("[{other}]"),
     }
     Ok(())
@@ -516,6 +548,36 @@ fn print_value(value: &Value) {
             "{}",
             serde_json::to_string_pretty(value).unwrap_or_default()
         ),
+    }
+}
+
+fn public_snapshot(snapshot: &Snapshot) -> Value {
+    let mut value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
+    rename_key(&mut value, "level", "intelligence");
+    value
+}
+
+fn public_event(event: &Event) -> Value {
+    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
+    if let Some(extra) = value.get_mut("extra") {
+        rename_key(extra, "level", "intelligence");
+    }
+    value
+}
+
+fn rename_key(value: &mut Value, old: &str, new: &str) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(value) = object.remove(old) {
+        object.entry(new).or_insert(value);
+    }
+}
+
+fn canonical_setting(what: &str) -> String {
+    match what {
+        "level" => "intelligence".into(),
+        other => other.into(),
     }
 }
 
@@ -567,6 +629,41 @@ fn take_i64(args: &mut Vec<String>, name: &str) -> Result<Option<i64>> {
         .transpose()
 }
 
+fn take_aliased_i64(
+    args: &mut Vec<String>,
+    canonical: &str,
+    compatibility: &str,
+) -> Result<Option<i64>> {
+    let canonical_value = take_i64(args, canonical)?;
+    let compatibility_value = take_i64(args, compatibility)?;
+    if canonical_value.is_some() && compatibility_value.is_some() {
+        return Err(CliError(format!(
+            "use {canonical} only; {compatibility} is its compatibility alias"
+        )));
+    }
+    Ok(canonical_value.or(compatibility_value))
+}
+
+fn output(args: &mut Vec<String>, frames_allowed: bool) -> Result<Output> {
+    let json = take_flag(args, "--json");
+    let frames = take_flag(args, "--frames");
+    if json && frames {
+        return Err(CliError("use either --json or --frames, not both".into()));
+    }
+    if frames && !frames_allowed {
+        return Err(CliError(
+            "--frames is only available on streaming commands".into(),
+        ));
+    }
+    Ok(if frames {
+        Output::Frames
+    } else if json {
+        Output::Json
+    } else {
+        Output::Human
+    })
+}
+
 fn take_providers(args: &mut Vec<String>) -> Result<Option<Vec<String>>> {
     Ok(take_value(args, "--providers")?.map(|raw| split_providers(&raw)))
 }
@@ -611,15 +708,46 @@ mod tests {
 
     #[test]
     fn options_can_appear_before_or_after_positionals() {
-        let mut args = vec!["demo".into(), "--from".into(), "12".into(), "--json".into()];
+        let mut args = vec![
+            "demo".into(),
+            "--since".into(),
+            "12".into(),
+            "--json".into(),
+        ];
         assert!(take_flag(&mut args, "--json"));
-        assert_eq!(take_i64(&mut args, "--from").unwrap(), Some(12));
+        assert_eq!(
+            take_aliased_i64(&mut args, "--since", "--from").unwrap(),
+            Some(12)
+        );
         assert_eq!(args, vec!["demo"]);
     }
 
     #[test]
+    fn compatibility_options_work_but_cannot_be_mixed_with_the_canonical_name() {
+        let mut old = vec!["--from".into(), "12".into()];
+        assert_eq!(
+            take_aliased_i64(&mut old, "--since", "--from").unwrap(),
+            Some(12)
+        );
+
+        let mut both = vec![
+            "--intelligence".into(),
+            "7".into(),
+            "--level".into(),
+            "6".into(),
+        ];
+        assert!(
+            take_aliased_i64(&mut both, "--intelligence", "--level")
+                .unwrap_err()
+                .to_string()
+                .contains("compatibility alias")
+        );
+    }
+
+    #[test]
     fn setting_values_follow_the_wire_types() {
-        assert_eq!(parse_setting("level", "7").unwrap(), json!(7));
+        assert_eq!(canonical_setting("level"), "intelligence");
+        assert_eq!(parse_setting("intelligence", "7").unwrap(), json!(7));
         assert_eq!(parse_setting("mcp", "false").unwrap(), json!(false));
         assert_eq!(
             parse_setting("providers", "claude, openai").unwrap(),
@@ -632,12 +760,48 @@ mod tests {
     }
 
     #[test]
+    fn public_json_names_intelligence_and_keeps_event_payloads_exact() {
+        let snapshot = Snapshot {
+            session: "demo".into(),
+            status: "waiting".into(),
+            intelligence: 5,
+            providers: Vec::new(),
+            provider: String::new(),
+            model: String::new(),
+            effort: String::new(),
+            cwd: "/tmp".into(),
+            seq: 2,
+            in_turn: false,
+            queued: 0,
+        };
+        let public = public_snapshot(&snapshot);
+        assert_eq!(public["intelligence"], 5);
+        assert!(public.get("level").is_none());
+
+        let mut event = Event::new(Event::TOOL_CALL);
+        event.args.insert("level".into(), json!("provider-native"));
+        event.extra.insert("level".into(), json!(5));
+        let public = public_event(&event);
+        assert_eq!(public["args"]["level"], "provider-native");
+        assert_eq!(public["extra"]["intelligence"], 5);
+        assert!(public["extra"].get("level").is_none());
+    }
+
+    #[test]
+    fn help_leads_with_the_shared_vocabulary() {
+        assert!(HELP.contains("history [--since SEQ]"));
+        assert!(HELP.contains("logs [OPTIONS]"));
+        assert!(HELP.contains("--intelligence 0..10"));
+        assert!(HELP.contains("attach = logs, events = history"));
+    }
+
+    #[test]
     fn a_rejected_send_is_terminal_even_though_it_remains_queued() {
         let event = Event::failure("crash", "nothing is running");
         let snapshot = Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            level: 5,
+            intelligence: 5,
             providers: Vec::new(),
             provider: String::new(),
             model: String::new(),

@@ -1,6 +1,6 @@
-//! One 0-10 dial that spans every provider you are logged into.
+//! One 0-10 intelligence dial that spans every provider you are logged into.
 //!
-//! A level maps to `{"provider", "model", "effort"}`, and omni hands those two
+//! An intelligence value maps to `{"provider", "model", "effort"}`, and omni hands those two
 //! strings to the CLI verbatim. It does not interpret them, does not rank
 //! anything, and does not know the name of a single model. Working out which
 //! models belong on the dial happens at the registry, over a list kept in a
@@ -32,7 +32,9 @@ pub const CACHE_TTL: f64 = 60.0 * 60.0;
 pub const QUIET_TTL: f64 = 5.0 * 60.0;
 /// Bump when a rung's shape changes; older caches are then ignored.
 pub const VERSION: u32 = 2;
-pub const LEVELS: i64 = 11;
+pub const INTELLIGENCE_VALUES: i64 = 11;
+#[deprecated(note = "use INTELLIGENCE_VALUES")]
+pub const LEVELS: i64 = INTELLIGENCE_VALUES;
 
 /// One step of the dial: who runs it, with what, at what effort.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,8 +43,8 @@ pub struct Rung {
     pub model: String,
     #[serde(default)]
     pub effort: String,
-    #[serde(default)]
-    pub level: i64,
+    #[serde(default, alias = "level")]
+    pub intelligence: i64,
 }
 
 impl Rung {
@@ -51,7 +53,7 @@ impl Rung {
             provider: provider.into(),
             model: model.into(),
             effort: effort.into(),
-            level: 0,
+            intelligence: 0,
         }
     }
 }
@@ -89,8 +91,8 @@ fn is_dial(value: &Value) -> bool {
         return false;
     };
     !map.is_empty()
-        && map.iter().all(|(level, rung)| {
-            level.chars().all(|c| c.is_ascii_digit())
+        && map.iter().all(|(intelligence, rung)| {
+            intelligence.chars().all(|c| c.is_ascii_digit())
                 && rung.get("model").is_some_and(Value::is_string)
         })
 }
@@ -220,30 +222,30 @@ pub fn table(providers: &[String]) -> BTreeMap<i64, Rung> {
     let mut out = BTreeMap::new();
     let allowed: BTreeSet<&str> = providers.iter().map(String::as_str).collect();
     if let Some(map) = levels(providers).as_object() {
-        for (level, body) in map {
-            let Ok(level) = level.parse::<i64>() else {
+        for (intelligence, body) in map {
+            let Ok(intelligence) = intelligence.parse::<i64>() else {
                 continue;
             };
             if let Ok(mut rung) = serde_json::from_value::<Rung>(body.clone()) {
                 // The registry chooses models and effort, never authority. A
                 // malformed or compromised response cannot route a session to
                 // a provider the caller did not make available.
-                if !(0..LEVELS).contains(&level)
+                if !(0..INTELLIGENCE_VALUES).contains(&intelligence)
                     || !allowed.contains(rung.provider.as_str())
                     || rung.model.trim().is_empty()
                 {
                     continue;
                 }
-                rung.level = level;
-                out.insert(level, rung);
+                rung.intelligence = intelligence;
+                out.insert(intelligence, rung);
             }
         }
     }
     out
 }
 
-/// The single rung for `level`. Out-of-range levels clamp rather than fail.
-pub fn resolve(level: i64, providers: &[String]) -> Result<Rung, NoDial> {
+/// The single rung for an intelligence value. Values outside 0-10 clamp.
+pub fn resolve(intelligence: i64, providers: &[String]) -> Result<Rung, NoDial> {
     let rungs = table(providers);
     if rungs.is_empty() {
         let mut named: Vec<&str> = providers.iter().map(String::as_str).collect();
@@ -253,8 +255,8 @@ pub fn resolve(level: i64, providers: &[String]) -> Result<Rung, NoDial> {
             remote()
         )));
     }
-    let wanted = level.clamp(0, LEVELS - 1);
-    // Clamped to a level the dial may still not carry — take the nearest below,
+    let wanted = intelligence.clamp(0, INTELLIGENCE_VALUES - 1);
+    // Clamped to a value the dial may still not carry — take the nearest below,
     // then the nearest at all, rather than refusing a dial we actually have.
     let picked = rungs
         .range(..=wanted)

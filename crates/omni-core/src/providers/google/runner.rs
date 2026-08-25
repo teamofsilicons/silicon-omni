@@ -277,7 +277,7 @@ impl RunnerTrait for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::kind;
+    use crate::events::event_type;
 
     fn runner(config: Config) -> Runner {
         Runner::new("s", &config, Arc::new(|_| {}))
@@ -319,7 +319,7 @@ mod tests {
             system_prompt: "be terse".into(),
             ..Config::default()
         });
-        runner.seed = runner.opening(&[Event::new(kind::START).saying("earlier")]);
+        runner.seed = runner.opening(&[Event::new(event_type::START).saying("earlier")]);
         assert!(!runner.seeded(), "nothing has reached agy yet");
         assert!(runner.seed.contains("be terse") && runner.seed.contains("earlier"));
     }

@@ -10,7 +10,7 @@ warm — so asking is a socket round trip rather than a process launch.
 
 from typing import Sequence
 
-from .chat import Chat
+from .chat import Chat, _normalize_snapshot
 from .client import DaemonError, call
 
 
@@ -88,17 +88,23 @@ class Inference:
 
     @staticmethod
     def dial(providers: Sequence[str] | None = None) -> dict:
-        """What each intelligence level 0-10 means for a set of providers.
+        """What each intelligence value from 0-10 means for a set of providers.
 
-        ``{"0": {"provider": ..., "model": ..., "effort": ...}, ...}``, straight
-        from the registry omni routes by. Handy for showing a user what they are
-        about to spend, and for finding the level that lands on a given
-        provider.
+        ``{"0": {"provider": ..., "model": ..., "effort": ...,
+        "intelligence": 0}, ...}``, straight from the registry omni routes by.
+        Handy for showing a user what they are about to spend, and for finding
+        the value that lands on a given provider.
         """
         try:
-            return call(
+            dial = call(
                 "dial", providers=list(providers) if providers else None, timeout=60.0
             )
+            for rung in dial.values():
+                if isinstance(rung, dict):
+                    if "intelligence" not in rung and "level" in rung:
+                        rung["intelligence"] = rung["level"]
+                    rung.pop("level", None)
+            return dial
         except DaemonError as exc:
             # ``NoDial`` was public before the daemon split. The wire protocol
             # only carries an error sentence today, so translate precisely the
@@ -121,7 +127,15 @@ class Inference:
     @staticmethod
     def sessions() -> list[dict]:
         """Every session the daemon is currently holding open."""
-        return call("sessions").get("sessions", [])
+        sessions = call("sessions").get("sessions", [])
+        public = []
+        for session in sessions:
+            session = dict(session)
+            snapshot = session.get("snapshot")
+            if snapshot:
+                session["snapshot"] = _normalize_snapshot(snapshot)
+            public.append(session)
+        return public
 
     @staticmethod
     def daemon() -> dict:

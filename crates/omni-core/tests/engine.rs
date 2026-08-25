@@ -8,7 +8,7 @@ mod harness;
 use std::time::Duration;
 
 use omni_core::chat::Change;
-use omni_core::events::{AUTH, CRASH, Event, kind};
+use omni_core::events::{AUTH, CRASH, Event, event_type};
 use omni_core::providers::test as double;
 use omni_core::session::Meta;
 
@@ -20,8 +20,8 @@ fn a_message_gets_an_answer_and_the_turn_ends() {
     session.send("hello");
     assert!(session.settle());
     assert_eq!(session.said(), vec!["echo: hello"]);
-    assert_eq!(session.count(kind::END), 1);
-    assert_eq!(session.count(kind::START), 1);
+    assert_eq!(session.count(event_type::END), 1);
+    assert_eq!(session.count(event_type::START), 1);
 }
 
 #[test]
@@ -49,9 +49,9 @@ fn tools_are_observed_in_the_order_they_happened() {
     assert!(session.settle());
     let kinds = session.kinds();
     let at = |what: &str| kinds.iter().position(|kind| kind == what).unwrap();
-    assert!(at(kind::START) < at(kind::TOOL_CALL));
-    assert!(at(kind::TOOL_CALL) < at(kind::TOOL_RESULT));
-    assert!(at(kind::TOOL_RESULT) < at(kind::END));
+    assert!(at(event_type::START) < at(event_type::TOOL_CALL));
+    assert!(at(event_type::TOOL_CALL) < at(event_type::TOOL_RESULT));
+    assert!(at(event_type::TOOL_RESULT) < at(event_type::END));
 }
 
 #[test]
@@ -66,11 +66,11 @@ fn a_message_sent_mid_turn_lands_inside_it() {
     session.send("second");
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(
-        session.count(kind::INJECTED),
+        session.count(event_type::INJECTED),
         1,
         "the second joined the open turn"
     );
-    assert_eq!(session.count(kind::START), 1);
+    assert_eq!(session.count(event_type::START), 1);
     double::running("test").unwrap().reply("done");
     assert!(session.settle());
 }
@@ -94,7 +94,7 @@ fn the_session_file_is_the_event_log() {
     let said: Vec<String> = reopened
         .events(0)
         .into_iter()
-        .filter(|event| event.is(kind::TEXT))
+        .filter(|event| event.is(event_type::TEXT))
         .map(|event| event.text)
         .collect();
     assert_eq!(
@@ -109,12 +109,12 @@ fn the_session_file_is_the_event_log() {
 #[test]
 fn raising_intelligence_moves_the_conversation_and_keeps_it() {
     let session = harness::two("switch");
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("remember VIOLET-7");
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "alpha");
 
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("[recall]");
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "beta");
@@ -124,19 +124,19 @@ fn raising_intelligence_moves_the_conversation_and_keeps_it() {
         recalled.contains("VIOLET-7"),
         "beta answered out of alpha's history: {recalled}"
     );
-    assert_eq!(session.count(kind::SWITCH_PROVIDER), 1);
+    assert_eq!(session.count(event_type::SWITCH_PROVIDER), 1);
 }
 
 #[test]
 fn coming_back_replays_only_what_was_missed() {
     let session = harness::two("replay");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("one");
     assert!(session.settle());
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("two");
     assert!(session.settle());
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("[recall]");
     assert!(session.settle());
 
@@ -155,7 +155,7 @@ fn coming_back_replays_only_what_was_missed() {
 #[test]
 fn nothing_changes_mid_turn() {
     let session = harness::two("mid-turn");
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("first");
     assert!(session.settle());
 
@@ -165,7 +165,7 @@ fn nothing_changes_mid_turn() {
     });
     session.send("second");
     session.settle_started();
-    session.set(Change::Level(10)); // asked for mid-turn
+    session.set(Change::Intelligence(10)); // asked for mid-turn
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(
         session.snapshot().provider,
@@ -185,27 +185,27 @@ fn nothing_changes_mid_turn() {
 #[test]
 fn a_model_change_on_one_provider_does_not_restart_it() {
     let session = harness::start("retune", &["test"]);
-    session.set(Change::Level(3));
+    session.set(Change::Intelligence(3));
     session.send("hello");
     assert!(session.settle());
-    let before = session.count(kind::NEW_SESSION);
+    let before = session.count(event_type::NEW_SESSION);
 
-    session.set(Change::Level(8));
+    session.set(Change::Intelligence(8));
     session.send("again");
     assert!(session.settle());
     assert_eq!(
-        session.count(kind::NEW_SESSION),
+        session.count(event_type::NEW_SESSION),
         before,
         "same session, new model"
     );
     assert!(!session.notices("retune").is_empty());
-    assert_eq!(session.count(kind::SWITCH_PROVIDER), 0);
+    assert_eq!(session.count(event_type::SWITCH_PROVIDER), 0);
 }
 
 #[test]
 fn a_provider_that_cannot_retune_is_relaunched_instead() {
     let session = harness::start("retune-refused", &["test"]);
-    session.set(Change::Level(3));
+    session.set(Change::Intelligence(3));
     session.send("hello");
     assert!(session.settle());
     let (retunes, launches) = (
@@ -217,7 +217,7 @@ fn a_provider_that_cannot_retune_is_relaunched_instead() {
         ..Default::default()
     });
 
-    session.set(Change::Level(8));
+    session.set(Change::Intelligence(8));
     session.send("again");
     assert!(session.settle());
     assert_eq!(
@@ -236,7 +236,7 @@ fn a_provider_that_cannot_retune_is_relaunched_instead() {
 #[test]
 fn losing_a_login_moves_the_chat_to_whoever_is_left() {
     let session = harness::two("failover");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("hello");
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "beta");
@@ -249,7 +249,8 @@ fn losing_a_login_moves_the_chat_to_whoever_is_left() {
     session.settle_started();
     double::running("beta").unwrap().fail(AUTH, "", true);
     assert!(
-        session.recorded(|event| { event.is(kind::CONFIG) && event.text == "provider_removed" })
+        session
+            .recorded(|event| { event.is(event_type::CONFIG) && event.text == "provider_removed" })
     );
     assert!(session.settle());
 
@@ -270,7 +271,7 @@ fn losing_a_login_moves_the_chat_to_whoever_is_left() {
 #[test]
 fn a_straggling_end_does_not_close_the_successors_turn() {
     let session = harness::two("straggler");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("hello");
     assert!(session.settle());
 
@@ -283,7 +284,8 @@ fn a_straggling_end_does_not_close_the_successors_turn() {
     // Every real adapter reports the failure and the end of the turn together.
     double::running("beta").unwrap().fail(AUTH, "", true);
     assert!(
-        session.recorded(|event| { event.is(kind::CONFIG) && event.text == "provider_removed" })
+        session
+            .recorded(|event| { event.is(event_type::CONFIG) && event.text == "provider_removed" })
     );
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "alpha");
@@ -301,11 +303,11 @@ fn a_straggling_end_does_not_close_the_successors_turn() {
 fn turning_the_failover_off_reports_and_stops() {
     let session = harness::two("no-failover");
     session.set(Change::Autoremove(false));
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("hello");
     assert!(session.settle());
     double::running("beta").unwrap().fail(AUTH, "", true);
-    assert!(session.recorded(|event| event.is(kind::ERROR) && event.fault == AUTH));
+    assert!(session.recorded(|event| event.is(event_type::ERROR) && event.kind == AUTH));
     assert!(session.settle());
     assert!(session.notices("provider_removed").is_empty());
     assert_eq!(session.snapshot().providers, vec!["beta", "alpha"]);
@@ -317,15 +319,14 @@ fn losing_the_last_provider_says_so_rather_than_hanging() {
     session.send("hello");
     assert!(session.settle());
     double::running("test").unwrap().fail(AUTH, "", true);
-    assert!(
-        session
-            .recorded(|event| { event.is(kind::ERROR) && event.error.contains("log one back in") })
-    );
+    assert!(session.recorded(|event| {
+        event.is(event_type::ERROR) && event.error.contains("log one back in")
+    }));
     assert!(session.settle());
     let blocked = session
         .log()
         .into_iter()
-        .find(|event| event.is(kind::ERROR) && event.error.contains("log one back in"));
+        .find(|event| event.is(event_type::ERROR) && event.error.contains("log one back in"));
     assert!(blocked.is_some(), "it said what to do");
     assert_eq!(session.snapshot().status, "waiting", "not stuck on busy");
 }
@@ -348,7 +349,9 @@ fn failed_turns_do_not_advance_the_providers_sync_watermark() {
         session.send("this turn fails");
         session.settle_started();
         double::running("test").unwrap().fail(fault, "failed", true);
-        assert!(session.recorded(|event| { event.is(kind::ERROR) && event.error == "failed" }));
+        assert!(
+            session.recorded(|event| { event.is(event_type::ERROR) && event.error == "failed" })
+        );
         assert!(session.settle());
 
         assert_eq!(
@@ -362,15 +365,46 @@ fn failed_turns_do_not_advance_the_providers_sync_watermark() {
 // ------------------------------------------------------------- what is hot
 
 #[test]
+fn five_consecutive_settled_turns_keep_one_runner_and_native_session() {
+    let session = harness::start("five-hot-turns", &["test"]);
+    let runner = double::running("test").unwrap();
+    let native = Meta::open("five-hot-turns").native("test").0;
+    assert!(
+        !native.is_empty(),
+        "the provider has one native conversation"
+    );
+    assert_eq!(runner.starts(), 1, "the runner was brought up once");
+
+    for turn in 1..=5 {
+        session.send(&format!("turn {turn}"));
+        assert!(session.settle(), "turn {turn} settled");
+        assert_eq!(
+            runner.starts(),
+            1,
+            "turn {turn} reused the running provider"
+        );
+        assert_eq!(
+            Meta::open("five-hot-turns").native("test").0,
+            native,
+            "turn {turn} stayed in the same native conversation"
+        );
+    }
+
+    assert_eq!(session.count(event_type::START), 5);
+    assert_eq!(session.count(event_type::END), 5);
+    assert_eq!(session.count(event_type::INJECTED), 0);
+}
+
+#[test]
 fn a_provider_is_left_running_between_uses() {
     let session = harness::two("parked");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("hello");
     assert!(session.settle());
     let beta = double::running("beta").unwrap();
     assert!(beta.up());
 
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("over here");
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "alpha");
@@ -383,23 +417,23 @@ fn a_provider_is_left_running_between_uses() {
 #[test]
 fn coming_back_to_a_parked_provider_costs_no_new_session() {
     let session = harness::two("hot");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("hello");
     assert!(session.settle());
     let beta = double::running("beta").unwrap();
 
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("elsewhere");
     assert!(session.settle());
     assert!(beta.up(), "it stayed up while the conversation was away");
 
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("[recall]");
     assert!(session.settle());
     let started: Vec<Event> = session
         .log()
         .into_iter()
-        .filter(|event| event.is(kind::NEW_SESSION) && event.provider == "beta")
+        .filter(|event| event.is(event_type::NEW_SESSION) && event.provider == "beta")
         .collect();
     assert_eq!(started.len(), 1, "the same native session, picked back up");
     let recalled = session.said().pop().unwrap();
@@ -412,7 +446,7 @@ fn coming_back_to_a_parked_provider_costs_no_new_session() {
 #[test]
 fn parked_deferred_catch_up_is_not_synced_before_delivery() {
     let session = harness::two("deferred-parked");
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     session.send("beta heard this live");
     assert!(session.settle());
     let beta = double::running("beta").unwrap();
@@ -427,10 +461,10 @@ fn parked_deferred_catch_up_is_not_synced_before_delivery() {
         autoreply: false,
         ..Default::default()
     });
-    session.set(Change::Level(0));
+    session.set(Change::Intelligence(0));
     session.send("beta has not heard this yet");
     session.settle_started();
-    session.set(Change::Level(10));
+    session.set(Change::Intelligence(10));
     alpha.reply("done elsewhere");
     assert!(session.settle());
     assert_eq!(session.snapshot().provider, "beta");
@@ -449,9 +483,51 @@ fn parked_deferred_catch_up_is_not_synced_before_delivery() {
 }
 
 #[test]
+fn parked_deferred_provider_with_matching_tuning_is_not_relaunched() {
+    let session = harness::two("deferred-nontunable-hot");
+    session.set(Change::Intelligence(10));
+    session.send("beta heard this live");
+    assert!(session.settle());
+
+    let beta = double::running("beta").unwrap();
+    beta.set_knobs(double::Knobs {
+        tunable: false,
+        defer: true,
+        ..Default::default()
+    });
+    let native = Meta::open("deferred-nontunable-hot").native("beta").0;
+    assert_eq!(beta.starts(), 1);
+
+    session.set(Change::Intelligence(0));
+    session.send("beta misses this turn while parked");
+    assert!(session.settle());
+    assert_eq!(session.snapshot().provider, "alpha");
+    assert!(beta.up(), "the deferred provider stayed parked and alive");
+
+    // Level 10 resolves to the exact same beta model and effort as before.
+    // Agy cannot retune, but matching tuning means there is nothing to ask it
+    // to change before deferred history is folded into this next delivery.
+    session.set(Change::Intelligence(10));
+    session.send("deliver the deferred catch-up");
+    assert!(session.settle());
+
+    assert_eq!(session.snapshot().provider, "beta");
+    assert_eq!(
+        beta.starts(),
+        1,
+        "matching model and effort must reuse the non-tunable runner"
+    );
+    assert_eq!(
+        Meta::open("deferred-nontunable-hot").native("beta").0,
+        native,
+        "the hot return kept its native conversation"
+    );
+}
+
+#[test]
 fn a_setting_a_running_provider_cannot_honour_replaces_it() {
     let session = harness::start("relaunch", &["test"]);
-    session.set(Change::Level(5));
+    session.set(Change::Intelligence(5));
     session.send("hello");
     assert!(session.settle());
     let launches = session.notices("launch").len();
@@ -538,7 +614,7 @@ fn a_broken_dial_is_reported_rather_than_raised() {
     let blocked = session
         .log()
         .into_iter()
-        .find(|event| event.is(kind::ERROR) && event.error.contains("no dial"));
+        .find(|event| event.is(event_type::ERROR) && event.error.contains("no dial"));
     assert!(blocked.is_some(), "{:?}", session.kinds());
     assert_eq!(session.snapshot().status, "waiting");
     assert_eq!(
@@ -555,13 +631,13 @@ fn two_messages_in_a_row_are_two_turns() {
     assert!(session.settle());
     session.send("two");
     assert!(session.settle());
-    assert_eq!(session.count(kind::START), 2);
-    assert_eq!(session.count(kind::END), 2);
-    assert_eq!(session.count(kind::INJECTED), 0);
+    assert_eq!(session.count(event_type::START), 2);
+    assert_eq!(session.count(event_type::END), 2);
+    assert_eq!(session.count(event_type::INJECTED), 0);
     let starts: Vec<i64> = session
         .log()
         .into_iter()
-        .filter(|event| event.is(kind::START))
+        .filter(|event| event.is(event_type::START))
         .map(|event| event.turn)
         .collect();
     assert_eq!(starts, vec![0, 1], "turn numbers survive provider changes");

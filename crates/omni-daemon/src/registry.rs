@@ -503,7 +503,10 @@ mod tests {
             .open(
                 "s",
                 || panic!("a warm session must not probe providers"),
-                vec![Change::Providers(vec!["beta".into()]), Change::Level(10)],
+                vec![
+                    Change::Providers(vec!["beta".into()]),
+                    Change::Intelligence(10),
+                ],
                 None,
                 conn,
                 -1,
@@ -514,7 +517,7 @@ mod tests {
         assert_eq!(again.listeners(), 1);
         assert!(wait_for(|| {
             let state = again.handle.snapshot();
-            state.providers == ["beta"] && state.level == 10
+            state.providers == ["beta"] && state.intelligence == 10
         }));
         registry.shutdown();
     }
@@ -531,21 +534,21 @@ mod tests {
             .open(
                 "s",
                 || names,
-                vec![Change::Level(8), Change::Subagents(true)],
+                vec![Change::Intelligence(8), Change::Subagents(true)],
                 None,
                 conn,
                 0,
             )
             .unwrap();
 
-        assert_eq!(live.handle.snapshot().level, 8);
+        assert_eq!(live.handle.snapshot().intelligence, 8);
         let meta = Meta::open("s");
         assert_eq!(meta.setting("level"), Some(&serde_json::json!(8)));
         assert_eq!(meta.setting("subagents"), Some(&serde_json::json!(true)));
         let configured: Vec<String> = Store::open("s")
             .events(0)
             .into_iter()
-            .filter(|event| event.is(omni_core::events::kind::CONFIG))
+            .filter(|event| event.is(omni_core::events::event_type::CONFIG))
             .map(|event| event.text)
             .collect();
         assert!(configured.contains(&"intelligence".to_string()));
@@ -565,7 +568,7 @@ mod tests {
             .unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());
 
-        registry.set("s", Change::Level(7)).unwrap();
+        registry.set("s", Change::Intelligence(7)).unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());
         registry.send("s", "durable").unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());

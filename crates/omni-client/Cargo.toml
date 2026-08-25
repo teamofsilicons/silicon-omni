@@ -1,6 +1,6 @@
 [package]
-name = "omni-client"
-description = "Thin client for the silicon omni daemon."
+name = "silicon-omni"
+description = "Rust client for the silicon omni daemon."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

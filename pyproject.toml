@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silicon-omni"
-version = "0.4.0"
+version = "0.5.0"
 description = "One Python interface for Claude Code, Codex and Antigravity, backed by a persistent Rust daemon."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,7 +28,8 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-omni = "omni.cli:main"
+silicon-omni = "omni.cli:main"
+so = "omni.cli:short"
 
 [project.urls]
 Homepage = "https://omni.teamofsilicons.com"
@@ -49,8 +50,10 @@ path = "hatch_build.py"
 include = [
   "/Cargo.lock",
   "/Cargo.toml",
+  "/CHANGELOG.md",
   "/LICENSE",
   "/README.md",
+  "/benchmarks",
   "/crates",
   "/hatch_build.py",
   "/omni",

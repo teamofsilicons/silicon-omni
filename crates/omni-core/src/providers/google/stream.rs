@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
-use crate::events::{Event, classify, kind};
+use crate::events::{Event, classify, event_type};
 
 #[derive(Default)]
 pub struct Stream {
@@ -91,7 +91,7 @@ impl Stream {
         }
         let mut events = Vec::new();
         if step["usage"]["thinking_tokens"].as_i64().unwrap_or(0) > 0 {
-            events.push(self.step_event(kind::THINKING, index));
+            events.push(self.step_event(event_type::THINKING, index));
         }
         let said = self
             .text
@@ -100,7 +100,7 @@ impl Stream {
             .trim()
             .to_string();
         if !said.is_empty() {
-            events.push(self.step_event(kind::TEXT, index).saying(said));
+            events.push(self.step_event(event_type::TEXT, index).saying(said));
         }
         events
     }
@@ -115,7 +115,7 @@ impl Stream {
             .to_string();
         let mut events = Vec::new();
         if self.called.insert(index) {
-            let mut call = self.step_event(kind::TOOL_CALL, index);
+            let mut call = self.step_event(event_type::TOOL_CALL, index);
             call.tool = name.clone();
             call.id = index.to_string();
             call.args = info["parameters"].as_object().cloned().unwrap_or_default();
@@ -127,7 +127,7 @@ impl Stream {
         self.called.remove(&index);
         let failure = &info["error"];
         let failed = failure.is_object();
-        let mut result = self.step_event(kind::TOOL_RESULT, index);
+        let mut result = self.step_event(event_type::TOOL_RESULT, index);
         result.tool = name;
         result.id = index.to_string();
         result.result = if failed {
@@ -161,7 +161,7 @@ impl Stream {
             events.push(event);
         }
         events.push(
-            self.event(kind::END)
+            self.event(event_type::END)
                 .with(
                     "status",
                     result.get("status").cloned().unwrap_or(Value::Null),
@@ -255,7 +255,7 @@ mod tests {
                                 "text_delta": "hi", "usage": {"thinking_tokens": 12}}
             }),
         );
-        assert!(done[0].is(kind::THINKING) && done[1].is(kind::TEXT));
+        assert!(done[0].is(event_type::THINKING) && done[1].is(event_type::TEXT));
     }
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
                 }),
             )
             .iter()
-            .filter(|event| event.is(kind::TOOL_CALL))
+            .filter(|event| event.is(event_type::TOOL_CALL))
             .count();
         }
         assert_eq!(calls, 1);
@@ -285,7 +285,7 @@ mod tests {
                                 "tool_name": "GoogleSearch", "tool_info": {"output": "12 results"}}
             }),
         );
-        assert!(done[0].is(kind::TOOL_RESULT) && done[0].ok);
+        assert!(done[0].is(event_type::TOOL_RESULT) && done[0].ok);
         assert_eq!(done[0].result, json!("12 results"));
     }
 
@@ -300,7 +300,7 @@ mod tests {
                                 "tool_name": "Run", "tool_info": {"error": {"message": "nope"}}}
             }),
         );
-        let result = done.iter().find(|e| e.is(kind::TOOL_RESULT)).unwrap();
+        let result = done.iter().find(|e| e.is(event_type::TOOL_RESULT)).unwrap();
         assert!(!result.ok);
         assert_eq!(result.result, json!("nope"));
     }
@@ -317,8 +317,8 @@ mod tests {
                 }
             }),
         );
-        assert_eq!(events[0].fault, crate::events::LIMIT);
-        assert!(events[1].is(kind::END));
+        assert_eq!(events[0].kind, crate::events::LIMIT);
+        assert!(events[1].is(event_type::END));
         assert_eq!(events[0].native["conversation_id"], "c9");
         assert_eq!(events[1].native["conversation_id"], "c9");
     }
@@ -342,7 +342,11 @@ mod tests {
                                 "tool_name": "OldTool", "tool_info": {}}
             }),
         );
-        assert!(first_call.iter().any(|event| event.is(kind::TOOL_CALL)));
+        assert!(
+            first_call
+                .iter()
+                .any(|event| event.is(event_type::TOOL_CALL))
+        );
         feed(
             &mut stream,
             json!({"event": "result", "result": {"status": "ERROR", "error": "aborted"}}),
@@ -357,7 +361,10 @@ mod tests {
             }),
         );
         assert_eq!(
-            text.iter().find(|event| event.is(kind::TEXT)).unwrap().text,
+            text.iter()
+                .find(|event| event.is(event_type::TEXT))
+                .unwrap()
+                .text,
             "fresh"
         );
         let second_call = feed(
@@ -369,7 +376,9 @@ mod tests {
             }),
         );
         assert!(
-            second_call.iter().any(|event| event.is(kind::TOOL_CALL)),
+            second_call
+                .iter()
+                .any(|event| event.is(event_type::TOOL_CALL)),
             "a reused step index must still announce the new turn's tool"
         );
     }

@@ -83,7 +83,6 @@ class Event:
     SWITCH_PROVIDER = "switch_provider"
     NEW_SESSION = "new_session"
     CONFIG = "config"
-    SEED = "seed"
 
     # ---- payload ----
     type: str
@@ -109,7 +108,14 @@ class Event:
     def from_dict(cls, data: dict) -> "Event":
         """Build one from what the daemon sent. Unknown fields are ignored."""
         known = set(cls.__dataclass_fields__)
-        return cls(**{key: value for key, value in data.items() if key in known})
+        values = {key: value for key, value in data.items() if key in known}
+        extra = values.get("extra")
+        if isinstance(extra, dict) and "level" in extra:
+            extra = dict(extra)
+            old_intelligence = extra.pop("level")
+            extra.setdefault("intelligence", old_intelligence)
+            values["extra"] = extra
+        return cls(**values)
 
     def to_dict(self) -> dict:
         """Fields still at their default are dropped, as on the wire."""

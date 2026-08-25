@@ -1,7 +1,8 @@
 """Feed a chat from a subscription.
 
-``chat.send`` never blocks and is safe from any thread, so omni does not care
-whether you drive it from asyncio, a queue, or a webhook.
+``chat.send`` waits for durable daemon acceptance, not for model output. It is
+safe from any thread; async callers should move that short socket round trip to
+a worker so omni does not care whether messages came from a queue or webhook.
 """
 
 import asyncio
@@ -29,7 +30,8 @@ async def main():
     chat.start()
 
     async def on_msg(msg):
-        chat.send(msg.data.decode())  # opens a turn, or lands mid-flight
+        # Acceptance crosses the daemon socket, so do not block this event loop.
+        await asyncio.to_thread(chat.send, msg.data.decode())
         await msg.ack()
 
     await nc.subscribe("agent.msgs", cb=on_msg)

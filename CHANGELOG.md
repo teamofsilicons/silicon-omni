@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0
+
+**Python, Rust, and the terminal now share one public vocabulary.** `Inference`
+opens a `Chat`; the session id names its durable conversation; `intelligence` is
+the 0–10 setting; and every occurrence is an `Event`. Python and JSON use
+`event.type`, while Rust uses `event.event_type` because `type` is reserved;
+`event.kind` now means only an error classification. Persisted reads are
+`history`, replay begins at `since`, and the lifecycle is consistently
+`start` / `send` / `detach` / `stop` / `refresh`. The CLI follows the same terms
+with `--intelligence`, `--since`, `history`, and `logs`; the 0.4 spellings
+`--level`, `--from`, `events`, and `attach` remain accepted as compatibility
+aliases. The version-1 wire and old metadata spellings remain readable without
+being exposed as a second public API.
+
+**Rust now has the same high-level `Inference → Chat → Event` path as Python.**
+Transport-oriented `Client`, `OpenOptions`, `Session`, `Frame`, and `Request`
+remain available for low-level integrations, but they are no longer the primary
+documented API.
+
+**Steady-state provider turns are the performance contract.** Claude, Codex, and
+Antigravity each keep one live runner and native conversation across settled,
+consecutive turns. The release suite now proves five turns produce five distinct
+START/END pairs without injection or process replacement, and the grouped live
+benchmark teaches five facts to each provider before Claude recalls all fifteen.
+
+**The public Rust package is `silicon-omni`.** Rust users add the same product name
+with Cargo and import it as `silicon_omni`; the unpublished internal `omni-client`
+package name has been retired before the first crates.io release.
+
+**The terminal client is `silicon-omni`, with `so` as its short name.** Both the
+Cargo-installed CLI and Python wheel expose those commands over the same native
+client. The older experimental `omni` executable name is retired in 0.5.0.
+
+**Antigravity now survives a return with unchanged tuning.** A parked provider whose
+model and effort already match is adopted directly. Omni no longer asks a
+non-retunable Antigravity process to perform a no-op retune and then cold-starts it
+when that unsupported request returns false. Real tuning changes still restart a
+provider that cannot apply them live.
+
+**The durable event hot path does less repeated filesystem work.** A live session owns
+one validated JSONL appender instead of reopening, chmodding, seeking, and checking
+the log tail for every event. Every append still crosses the same `sync_data`
+persist-before-publish boundary; torn-tail repair, private permissions, corruption
+refusal, and sequence rollback semantics are unchanged. Repeated metadata values no
+longer replace an already-identical durable file.
+
 ## 0.4.0
 
 **The conversation moved into a Rust daemon.** `omnid` now owns provider processes,
@@ -139,7 +185,7 @@ them.
 
 **A lost login costs the provider, not the conversation.** An `ERROR`/`auth` mid-run
 drops that provider from the chat, emits `CONFIG`/`provider_removed`, and resolves the
-same intelligence level again over whoever is left — so the chat carries on somewhere
+same intelligence value again over whoever is left — so the chat carries on somewhere
 else. Off with `chat.disable_autoremoving_unauthenticated_providers()`.
 
 **Every `reset` is an RFC3339 UTC string**, from all three providers, whatever they

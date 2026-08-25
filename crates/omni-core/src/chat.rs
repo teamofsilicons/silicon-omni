@@ -21,7 +21,7 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::events::{AUTH, CRASH, Event, kind};
+use crate::events::{AUTH, CRASH, Event, event_type};
 use crate::intelligence::{Rung, resolve};
 use crate::providers;
 use crate::providers::base::{CONFIRMED, CONFIRMED_AS, Config, Delivery, Emit, GENERATION, Runner};
@@ -33,14 +33,15 @@ pub const BUSY: &str = "busy";
 pub const STOPPED: &str = "stopped";
 
 const MODEL_EVENTS: &[&str] = &[
-    kind::TEXT,
-    kind::THINKING,
-    kind::TOOL_CALL,
-    kind::TOOL_RESULT,
+    event_type::TEXT,
+    event_type::THINKING,
+    event_type::TOOL_CALL,
+    event_type::TOOL_RESULT,
 ];
 
 const ACTIVE_PROVIDERS: &str = "active_providers";
-const LEVEL: &str = "level";
+/// The 0.4 metadata spelling retained on disk for cold-session compatibility.
+const STORED_INTELLIGENCE: &str = "level";
 const SYSTEM_PROMPT: &str = "system_prompt";
 const APPEND_SYSTEM_PROMPT: &str = "append_system_prompt";
 const SUBAGENTS: &str = "subagents";
@@ -67,7 +68,7 @@ const ONCE: &[&str] = &["unsupported", "approximated"];
 #[derive(Debug, Clone)]
 pub enum Change {
     Providers(Vec<String>),
-    Level(i64),
+    Intelligence(i64),
     SystemPrompt(String),
     AppendSystemPrompt(String),
     Subagents(bool),
@@ -101,7 +102,10 @@ pub enum Wake {
 pub struct Snapshot {
     pub session: String,
     pub status: String,
-    pub level: i64,
+    /// The cross-provider 0-10 intelligence setting. The transport retains
+    /// the legacy `level` key so 0.4 clients can still read daemon snapshots.
+    #[serde(rename = "level", alias = "intelligence")]
+    pub intelligence: i64,
     pub providers: Vec<String>,
     /// The provider currently up, if any.
     pub provider: String,
@@ -221,7 +225,7 @@ pub struct Chat {
     store: Store,
     meta: Meta,
     providers: Vec<String>,
-    level: i64,
+    intelligence: i64,
     config: Config,
     sink: Emit,
     inbox: Receiver<Wake>,
@@ -292,7 +296,7 @@ impl Chat {
         let delivered: BTreeSet<String> = store
             .events(0)
             .into_iter()
-            .filter(|event| event.is(kind::START) || event.is(kind::INJECTED))
+            .filter(|event| event.is(event_type::START) || event.is(event_type::INJECTED))
             .filter_map(|event| {
                 event
                     .extra
@@ -312,9 +316,9 @@ impl Chat {
                 .err()
                 .map(|error| format!("reconciling delivered messages: {error}"));
         }
-        let level = meta
-            .setting(LEVEL)
-            .or_else(|| meta.get(LEVEL))
+        let intelligence = meta
+            .setting(STORED_INTELLIGENCE)
+            .or_else(|| meta.get(STORED_INTELLIGENCE))
             .and_then(|value| value.as_i64())
             .unwrap_or(5);
         let providers = meta
@@ -353,7 +357,7 @@ impl Chat {
             .unwrap_or(true);
         let mut initial_settings = serde_json::Map::new();
         initial_settings.insert(ACTIVE_PROVIDERS.into(), json!(providers));
-        initial_settings.insert(LEVEL.into(), json!(level));
+        initial_settings.insert(STORED_INTELLIGENCE.into(), json!(intelligence));
         initial_settings.insert(SYSTEM_PROMPT.into(), json!(config.system_prompt));
         initial_settings.insert(
             APPEND_SYSTEM_PROMPT.into(),
@@ -375,7 +379,7 @@ impl Chat {
         let state = Arc::new(RwLock::new(Snapshot {
             session: session_id.to_string(),
             status: IDLE.into(),
-            level,
+            intelligence,
             providers: providers.clone(),
             provider: String::new(),
             model: String::new(),
@@ -395,7 +399,7 @@ impl Chat {
             store,
             meta,
             providers,
-            level,
+            intelligence,
             config,
             sink,
             inbox,
@@ -530,10 +534,14 @@ impl Chat {
                 self.providers = providers;
                 ("providers", json!({"providers": self.providers}))
             }
-            Change::Level(level) => {
-                self.save_setting(LEVEL, json!(level), "saving intelligence metadata")?;
-                self.level = level;
-                ("intelligence", json!({"level": level}))
+            Change::Intelligence(intelligence) => {
+                self.save_setting(
+                    STORED_INTELLIGENCE,
+                    json!(intelligence),
+                    "saving intelligence metadata",
+                )?;
+                self.intelligence = intelligence;
+                ("intelligence", json!({"intelligence": intelligence}))
             }
             Change::SystemPrompt(text) => {
                 self.save_setting(SYSTEM_PROMPT, json!(text), "saving system-prompt metadata")?;
@@ -661,21 +669,21 @@ impl Chat {
             // A real END emitted while interrupting wins over the synthetic
             // fallback in shutdown. Clear the durable turn here, but never
             // launch, retune, or flush more work while stopping.
-            if event.is(kind::END) {
+            if event.is(event_type::END) {
                 self.in_turn = false;
                 self.turn_recorded = false;
                 self.next_turns = 0;
             }
             return;
         }
-        if MODEL_EVENTS.contains(&event.kind.as_str()) {
+        if MODEL_EVENTS.contains(&event.event_type.as_str()) {
             self.settle(|state| state.status = BUSY.into());
-        } else if event.is(kind::END) {
+        } else if event.is(event_type::END) {
             self.in_turn = false;
             self.turn_recorded = false;
             self.finish_turn();
-        } else if event.is(kind::ERROR)
-            && FATAL.contains(&event.fault.as_str())
+        } else if event.is(event_type::ERROR)
+            && FATAL.contains(&event.kind.as_str())
             && event
                 .extra
                 .get("willRetry")
@@ -703,14 +711,14 @@ impl Chat {
         else {
             return;
         };
-        if !matches!(opening.as_str(), kind::START | kind::INJECTED) {
+        if !matches!(opening.as_str(), event_type::START | event_type::INJECTED) {
             return;
         }
-        event.kind = opening;
+        event.event_type = opening;
         event
             .extra
             .insert(MESSAGE_ID.into(), json!(message.id.clone()));
-        if event.is(kind::START) {
+        if event.is(event_type::START) {
             event.turn = self.turn + 1;
         } else {
             event.extra.insert("landed".into(), json!("same_turn"));
@@ -734,7 +742,7 @@ impl Chat {
     /// Forgotten when the setting changes and when the conversation moves to
     /// another provider, which are the two moments the answer can differ.
     fn repeated(&mut self, event: &Event) -> bool {
-        if !event.is(kind::CONFIG) || !ONCE.contains(&event.text.as_str()) {
+        if !event.is(event_type::CONFIG) || !ONCE.contains(&event.text.as_str()) {
             return false;
         }
         // The serialised form, not the fields: `extra` holds lists, and two
@@ -781,7 +789,7 @@ impl Chat {
 
     /// An error that ends the turn: a crash, or a login that has gone.
     fn fatal(&mut self, event: &Event) {
-        if event.fault == AUTH {
+        if event.kind == AUTH {
             self.unauthenticated(event);
         } else {
             // The provider died. Close the turn honestly and let the next send
@@ -872,7 +880,7 @@ impl Chat {
             self.turn_recorded = false;
             let extra = extra.as_object().cloned().unwrap_or_default();
             if self
-                .record(Event::new(kind::END).from(provider).extras(extra))
+                .record(Event::new(event_type::END).from(provider).extras(extra))
                 .is_none()
             {
                 return false;
@@ -1008,14 +1016,14 @@ impl Chat {
                 continue;
             }
             let opening = if was_in_turn {
-                kind::INJECTED
+                event_type::INJECTED
             } else {
-                kind::START
+                event_type::START
             };
             let mut event = Event::new(opening)
                 .saying(message.text.clone())
                 .with(MESSAGE_ID, message.id.clone());
-            if event.is(kind::START) {
+            if event.is(event_type::START) {
                 event.turn = self.turn + 1;
             } else {
                 let landed = match delivery {
@@ -1084,7 +1092,7 @@ impl Chat {
     // ---------------------------------------------------------------- runners
 
     fn rung(&self) -> Result<Rung, String> {
-        resolve(self.level, &self.providers).map_err(|err| err.to_string())
+        resolve(self.intelligence, &self.providers).map_err(|err| err.to_string())
     }
 
     fn signature(&self, rung: &Rung) -> Signature {
@@ -1140,7 +1148,7 @@ impl Chat {
                             .from(&rung.provider)
                             .about(&rung.model)
                             .with("effort", rung.effort.clone())
-                            .with("level", rung.level),
+                            .with("intelligence", rung.intelligence),
                     )
                     .is_none()
                 {
@@ -1171,12 +1179,12 @@ impl Chat {
             if !previous.is_empty()
                 && self
                     .record(
-                        Event::new(kind::SWITCH_PROVIDER)
+                        Event::new(event_type::SWITCH_PROVIDER)
                             .from(&rung.provider)
                             .about(&rung.model)
                             .with("from", previous)
                             .with("to", rung.provider.clone())
-                            .with("level", rung.level),
+                            .with("intelligence", rung.intelligence),
                     )
                     .is_none()
             {
@@ -1248,8 +1256,8 @@ impl Chat {
         let wanted = self.signature(rung);
 
         // Already up and reachable? Then there is nothing to launch.
-        if let Some((mut kept, epoch)) = self.take_parked(&rung.provider, &wanted) {
-            if kept.retune(&rung.model, &rung.effort) {
+        if let Some((mut kept, epoch, tuning_matches)) = self.take_parked(&rung.provider, &wanted) {
+            if tuning_matches || kept.retune(&rung.model, &rung.effort) {
                 return self.adopt(kept, epoch, rung, false);
             }
             kept.stop();
@@ -1291,18 +1299,17 @@ impl Chat {
         &mut self,
         provider: &str,
         wanted: &Signature,
-    ) -> Option<(Box<dyn Runner>, Option<u64>)> {
-        let matches = self
-            .parked
-            .get(provider)
-            .is_some_and(|parked| parked.signature.3 == wanted.3);
-        if !matches {
+    ) -> Option<(Box<dyn Runner>, Option<u64>, bool)> {
+        let parked = self.parked.get(provider)?;
+        if parked.signature.3 != wanted.3 {
             if let Some(mut stale) = self.parked.remove(provider) {
                 stale.runner.stop(); // its config is out of date; it cannot be reused
             }
             return None;
         }
+        let tuning_matches = parked.signature.1 == wanted.1 && parked.signature.2 == wanted.2;
         self.unpark(provider)
+            .map(|(runner, epoch)| (runner, epoch, tuning_matches))
     }
 
     fn adopt(
@@ -1335,7 +1342,7 @@ impl Chat {
                     .from(&rung.provider)
                     .about(&rung.model)
                     .with("effort", rung.effort.clone())
-                    .with("level", rung.level)
+                    .with("intelligence", rung.intelligence)
                     .with("native", native.clone()),
             )
             .is_none()
@@ -1345,7 +1352,7 @@ impl Chat {
         if fresh
             && self
                 .record(
-                    Event::new(kind::NEW_SESSION)
+                    Event::new(event_type::NEW_SESSION)
                         .from(&rung.provider)
                         .about(&rung.model)
                         .with("native", native),
@@ -1429,7 +1436,7 @@ impl Chat {
                 .unwrap_or_default();
             if self
                 .record(
-                    Event::new(kind::END)
+                    Event::new(event_type::END)
                         .from(&provider)
                         .about(&model)
                         .with("interrupted", true)
@@ -1612,7 +1619,7 @@ impl Chat {
             .map(|r| r.name().to_string())
             .unwrap_or_default();
         self.settle(|state| {
-            state.level = self.level;
+            state.intelligence = self.intelligence;
             state.providers = self.providers.clone();
             state.cwd = self.config.cwd.clone();
             state.provider = if running.is_empty() {
@@ -1761,21 +1768,24 @@ mod tests {
         assert_eq!(handle.snapshot().queued, 2);
         assert!(chat.store.events(0).is_empty(), "pipe writes are not proof");
 
-        chat.absorb(acknowledgement("other", kind::START));
+        chat.absorb(acknowledgement("other", event_type::START));
         assert_eq!(chat.awaiting.len(), 2, "an unrelated replay was ignored");
 
-        chat.absorb(acknowledgement("same", kind::START));
-        chat.absorb(acknowledgement("same", kind::INJECTED));
-        chat.absorb(acknowledgement("same", kind::INJECTED));
+        chat.absorb(acknowledgement("same", event_type::START));
+        chat.absorb(acknowledgement("same", event_type::INJECTED));
+        chat.absorb(acknowledgement("same", event_type::INJECTED));
         let durable = chat.store.events(0);
         assert_eq!(
-            durable.iter().filter(|event| event.is(kind::START)).count(),
+            durable
+                .iter()
+                .filter(|event| event.is(event_type::START))
+                .count(),
             1
         );
         assert_eq!(
             durable
                 .iter()
-                .filter(|event| event.is(kind::INJECTED))
+                .filter(|event| event.is(event_type::INJECTED))
                 .count(),
             1,
             "the third duplicate had no matching pipe write"
@@ -1784,7 +1794,7 @@ mod tests {
         assert!(durable.iter().all(|event| !event.is(CONFIRMED)));
         let ids: BTreeSet<&str> = durable
             .iter()
-            .filter(|event| event.is(kind::START) || event.is(kind::INJECTED))
+            .filter(|event| event.is(event_type::START) || event.is(event_type::INJECTED))
             .filter_map(|event| event.extra[MESSAGE_ID].as_str())
             .collect();
         assert_eq!(ids.len(), 2, "duplicate text kept distinct correlations");
@@ -1798,22 +1808,22 @@ mod tests {
         let (mut chat, handle, _, _) = delivery_chat("s", Delivery::Echoed);
         chat.current = None;
         chat.dispatch("one".into());
-        chat.absorb(acknowledgement("one", kind::START));
+        chat.absorb(acknowledgement("one", event_type::START));
         chat.dispatch("two".into());
 
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
 
-        chat.absorb(acknowledgement("two", kind::START));
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(acknowledgement("two", event_type::START));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         assert_eq!(handle.snapshot().status, WAITING);
         assert!(!handle.snapshot().in_turn);
         let starts: Vec<i64> = chat
             .store
             .events(0)
             .into_iter()
-            .filter(|event| event.is(kind::START))
+            .filter(|event| event.is(event_type::START))
             .map(|event| event.turn)
             .collect();
         assert_eq!(starts, vec![0, 1]);
@@ -1832,7 +1842,7 @@ mod tests {
             .store
             .events(0)
             .into_iter()
-            .find(|event| event.is(kind::INJECTED))
+            .find(|event| event.is(event_type::INJECTED))
             .unwrap();
         assert_eq!(injected.extra["landed"], "next_turn");
         assert_eq!(chat.next_turns, 2);
@@ -1840,23 +1850,23 @@ mod tests {
             .store
             .events(0)
             .into_iter()
-            .filter(|event| event.is(kind::START) || event.is(kind::INJECTED))
+            .filter(|event| event.is(event_type::START) || event.is(event_type::INJECTED))
             .filter_map(|event| event.extra[MESSAGE_ID].as_str().map(str::to_string))
             .collect();
         assert_eq!(ids.len(), 3);
         assert!(Meta::open("s").pending().is_empty());
 
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
         assert_eq!(chat.next_turns, 1);
 
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
         assert_eq!(chat.next_turns, 0);
 
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         assert_eq!(handle.snapshot().status, WAITING);
         assert!(!handle.snapshot().in_turn);
     }
@@ -1873,7 +1883,7 @@ mod tests {
         // Simulate process death after the opening event fsync but before the
         // transactional outbox cleanup. Only the correlated first duplicate
         // has actually landed.
-        let mut opening = Event::new(kind::START)
+        let mut opening = Event::new(event_type::START)
             .saying("same")
             .with(MESSAGE_ID, accepted[0].id.clone());
         opening.turn = 0;
@@ -1916,7 +1926,7 @@ mod tests {
         let opening = Store::open("s")
             .events(0)
             .into_iter()
-            .find(|event| event.is(kind::START))
+            .find(|event| event.is(event_type::START))
             .unwrap();
         assert_eq!(opening.text, "survive the crash");
         assert_eq!(opening.extra[MESSAGE_ID], pending.id);
@@ -1970,7 +1980,10 @@ mod tests {
 
         chat.shutdown();
         let events = chat.store.events(0);
-        let ends: Vec<&Event> = events.iter().filter(|event| event.is(kind::END)).collect();
+        let ends: Vec<&Event> = events
+            .iter()
+            .filter(|event| event.is(event_type::END))
+            .collect();
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].extra["interrupted"], true);
         assert_eq!(ends[0].extra["stopped"], true);
@@ -1995,7 +2008,7 @@ mod tests {
         chat.dispatch("landed".into());
         chat.post
             .send(Wake::Heard(Box::new(
-                Event::new(kind::END).from(crate::providers::openai::NAME),
+                Event::new(event_type::END).from(crate::providers::openai::NAME),
             )))
             .unwrap();
 
@@ -2004,7 +2017,7 @@ mod tests {
             .store
             .events(0)
             .into_iter()
-            .filter(|event| event.is(kind::END))
+            .filter(|event| event.is(event_type::END))
             .collect();
         assert_eq!(ends.len(), 1);
         assert!(!ends[0].extra.contains_key("interrupted"));
@@ -2078,7 +2091,7 @@ mod tests {
         original
             .apply(Change::Providers(vec!["beta".into()]))
             .unwrap();
-        original.apply(Change::Level(9)).unwrap();
+        original.apply(Change::Intelligence(9)).unwrap();
         original
             .apply(Change::SystemPrompt("replace everything".into()))
             .unwrap();
@@ -2098,7 +2111,7 @@ mod tests {
         );
         let state = restored_handle.snapshot();
         assert_eq!(state.providers, ["beta"]);
-        assert_eq!(state.level, 9);
+        assert_eq!(state.intelligence, 9);
         assert_eq!(state.cwd, first_dir, "the later opener cannot move it");
         assert_eq!(restored.config.system_prompt, "replace everything");
         assert_eq!(restored.config.append_system_prompt, "and append this");
@@ -2138,7 +2151,7 @@ mod tests {
         assert!(stopped.load(Ordering::SeqCst));
         let events = seen.lock().unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].fault, "omni");
+        assert_eq!(events[0].kind, "omni");
         assert_eq!(events[0].seq, -1);
     }
 
@@ -2189,7 +2202,7 @@ mod tests {
         chat.turn_recorded = true;
 
         chat.absorb(
-            Event::new(kind::END)
+            Event::new(event_type::END)
                 .from(crate::providers::openai::NAME)
                 .with(RUNNER_EPOCH, 1),
         );
@@ -2213,19 +2226,19 @@ mod tests {
         chat.turn = 4;
 
         chat.absorb(
-            Event::new(kind::TEXT)
+            Event::new(event_type::TEXT)
                 .from(crate::providers::google::NAME)
                 .saying("late but preserved")
                 .with(RUNNER_EPOCH, 1),
         );
         chat.absorb(
-            Event::new(kind::TEXT)
+            Event::new(event_type::TEXT)
                 .from(crate::providers::openai::NAME)
                 .saying("late from an older native runner")
                 .with(RUNNER_EPOCH, 1),
         );
         chat.absorb(
-            Event::new(kind::TEXT)
+            Event::new(event_type::TEXT)
                 .from(crate::providers::openai::NAME)
                 .saying("already native")
                 .with(RUNNER_EPOCH, 2),
@@ -2235,7 +2248,7 @@ mod tests {
         assert_eq!(chat.meta.native(crate::providers::openai::NAME).1, -1);
 
         chat.absorb(
-            Event::new(kind::TEXT)
+            Event::new(event_type::TEXT)
                 .from(crate::providers::openai::NAME)
                 .saying("a later native turn")
                 .with(RUNNER_EPOCH, 2),
@@ -2300,14 +2313,14 @@ mod tests {
 
         let persisted = chat.record(Event::config("persisted")).unwrap();
         chat.store.path = invalid_child("store-is-blocked");
-        chat.absorb(Event::new(kind::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
         chat.publish();
 
         let events = seen.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].text, "persisted");
         assert_eq!(events[0].seq, persisted.seq);
-        assert_eq!(events[1].fault, "omni");
+        assert_eq!(events[1].kind, "omni");
         assert_eq!(events[1].seq, -1, "the terminal notice is not durable");
         assert!(events[1].error.starts_with("session persistence failed"));
         drop(events);
@@ -2353,7 +2366,7 @@ mod tests {
         assert!(active_stopped.load(Ordering::SeqCst));
         let events = seen.lock().unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].fault, "omni");
+        assert_eq!(events[0].kind, "omni");
         assert_eq!(
             events[0].turn, -1,
             "the terminal notice stays on the last durable turn"
@@ -2368,7 +2381,7 @@ mod tests {
             .bind(crate::providers::openai::NAME, "native-before")
             .unwrap();
         let persisted = chat
-            .record(Event::new(kind::TEXT).saying("durable"))
+            .record(Event::new(event_type::TEXT).saying("durable"))
             .unwrap();
         chat.publish();
         chat.meta.path = invalid_child("meta-is-blocked");
@@ -2387,7 +2400,7 @@ mod tests {
         let events = seen.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].text, "durable");
-        assert_eq!(events[1].fault, "omni");
+        assert_eq!(events[1].kind, "omni");
         assert_eq!(events[1].seq, -1);
         assert_eq!(Store::open("s").events(0).len(), 1);
     }

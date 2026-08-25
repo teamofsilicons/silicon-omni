@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::events::{Event, classify, kind};
+use crate::events::{Event, classify, event_type};
 
 const SKIP: &[&str] = &["userMessage", "hookPrompt"];
 const SHELL: &str = "commandExecution";
@@ -75,9 +75,9 @@ impl Stream {
             return Vec::new();
         }
         if sort == "reasoning" {
-            return vec![self.event(kind::THINKING)];
+            return vec![self.event(event_type::THINKING)];
         }
-        let mut event = self.event(kind::TOOL_CALL);
+        let mut event = self.event(event_type::TOOL_CALL);
         event.tool = tool_name(item);
         event.id = item.get("id").and_then(Value::as_str).unwrap_or("").into();
         event.args = arguments(item);
@@ -95,12 +95,12 @@ impl Stream {
                 return Vec::new();
             }
             return vec![
-                self.event(kind::TEXT)
+                self.event(event_type::TEXT)
                     .saying(text)
                     .with("phase", item.get("phase").cloned().unwrap_or(Value::Null)),
             ];
         }
-        let mut event = self.event(kind::TOOL_RESULT);
+        let mut event = self.event(event_type::TOOL_RESULT);
         event.tool = tool_name(item);
         event.id = item.get("id").and_then(Value::as_str).unwrap_or("").into();
         event.result = outcome(item);
@@ -132,7 +132,7 @@ impl Stream {
             events.push(event);
         }
         events.push(
-            self.event(kind::END)
+            self.event(event_type::END)
                 .with("status", turn.get("status").cloned().unwrap_or(Value::Null))
                 .with("ms", turn.get("durationMs").cloned().unwrap_or(Value::Null))
                 .with("usage", self.tokens.clone()),
@@ -211,7 +211,7 @@ mod tests {
             &json!({"item": {"type": "reasoning", "id": "r"}}),
         );
         assert_eq!(started.len(), 1);
-        assert!(started[0].is(kind::THINKING) && started[0].text.is_empty());
+        assert!(started[0].is(event_type::THINKING) && started[0].text.is_empty());
         assert!(
             stream
                 .feed(
@@ -301,8 +301,8 @@ mod tests {
             }),
         );
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].fault, crate::events::AUTH);
-        assert!(events[1].is(kind::END));
+        assert_eq!(events[0].kind, crate::events::AUTH);
+        assert!(events[1].is(event_type::END));
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
             &json!({"message": "stream disconnected", "willRetry": true}),
         );
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].fault, crate::events::UNAVAILABLE);
+        assert_eq!(events[0].kind, crate::events::UNAVAILABLE);
         assert_eq!(events[0].extra["willRetry"], true);
     }
 

@@ -44,12 +44,12 @@ everything that came before already in its head.
 pip install silicon-omni
 ```
 
-The wheel includes `omni`, the terminal client, and `omnid`, the Rust daemon. The first
-operation that needs the daemon starts it automatically; later programs connect to the
-same Unix socket under `~/.omni`. There is no service to install and no API server to
-configure. Set `OMNI_HOME` to move all state, or `OMNI_DAEMON` to use a particular
-daemon binary while developing. Release wheels target manylinux 2.28 on x86_64 and
-aarch64, plus macOS on Intel and Apple silicon.
+The wheel includes `silicon-omni` (also `so`), the terminal client, and `omnid`,
+the Rust daemon. The first operation that needs the daemon starts it automatically;
+later programs connect to the same Unix socket under `~/.omni`. There is no service
+to install and no API server to configure. Set `OMNI_HOME` to move all state, or
+`OMNI_DAEMON` to use a particular daemon binary while developing. Release wheels
+target manylinux 2.28 on x86_64 and aarch64, plus macOS on Intel and Apple silicon.
 
 Zero runtime dependencies. You bring the CLIs:
 
@@ -67,60 +67,72 @@ Installed *and* logged in. Anything else is not offered.
 
 ### Terminal and Rust clients
 
-The `omni` command installed by the Python wheel is the same socket client in a
-terminal. It starts `omnid` on first use, streams a turn as it happens, and detaches
-without cooling the provider. The two binaries can also be installed through Cargo:
+The `silicon-omni` and `so` commands installed by the Python wheel are the same
+socket client in a terminal. It starts `omnid` on first use, streams a turn as it
+happens, and detaches without cooling the provider. The CLI aliases and daemon can
+also be installed through Cargo:
 
 ```bash
 cargo install omni-daemon silicon-omni-cli
 ```
 
 ```bash
-omni chat my-session
-omni send my-session "what changed in this repo today?"
-omni attach --from 42 my-session
-omni sessions
-omni providers
-omni dial claude openai
-omni account claude status
-omni daemon status
+silicon-omni chat my-session
+so send --intelligence 7 my-session "what changed in this repo today?"
+so logs --since 42 my-session
+so history --since 0 my-session
+so sessions
+so providers
+so dial claude openai
+so account claude status
+so daemon status
 ```
 
-Every streaming command accepts `--json`. `omni help` lists session settings,
-account login, history, and daemon lifecycle commands. In a checkout, build both
-binaries with `cargo build --release -p omni-daemon -p silicon-omni-cli`.
+Every streaming command accepts `--json`, which emits one `Event` per line; add
+`--frames` only when a low-level integration needs transport envelopes and session
+snapshots. The compatibility names `--level`, `--from`, `events`, and `attach` still
+work, but new commands use `--intelligence`, `--since`, `history`, and `logs`.
+`silicon-omni help` (or `so help`) lists session settings, account login, history,
+and daemon lifecycle commands. In a checkout, build them with
+`cargo build --release -p omni-daemon -p silicon-omni-cli`.
 
-Rust programs use the synchronous `omni-client` crate. One connection multiplexes
-concurrent replies and any number of session streams; independent requests may finish
-out of order, while requests for the same session retain their wire order. `open`
-subscribes before it asks the daemon for replay, so an early frame cannot be lost:
+Rust programs use the synchronous `silicon-omni` crate with the same
+`Inference → Chat → Event` path as Python. One connection multiplexes concurrent
+replies and any number of Chat streams; independent requests may finish out of order,
+while requests for the same session retain their wire order. `start` subscribes before
+it asks the daemon for replay, so an early Event cannot be lost:
 
 ```bash
-cargo add omni-client
+cargo add silicon-omni
 ```
 
 ```rust
-use omni_client::{Client, OpenOptions, kind};
+use silicon_omni::{Event, Inference};
 
-let client = Client::connect()?;
-let mut chat = client.open(
-    OpenOptions::new("my-session")
-        .from_seq(-1)
-        .setting("level", 7),
-)?;
-chat.send("what changed in this repo today?")?;
+fn main() -> silicon_omni::Result<()> {
+    let inference = Inference::connect()?;
+    let mut chat = inference.load_or_create_session("my-session", None);
+    chat.intelligence(7)?.start()?;
+    chat.send("what changed in this repo today?")?;
 
-while let Some(event) = chat.recv()?.event {
-    if event.kind == kind::TEXT {
-        println!("{}", event.text);
+    for event in chat.events() {
+        let event = event?;
+        if event.event_type == Event::TEXT {
+            println!("{}", event.text);
+        }
+        if event.event_type == Event::END {
+            break;
+        }
     }
-    if event.kind == kind::END {
-        break;
-    }
+    chat.detach()?;
+    Ok(())
 }
-chat.detach()?;
-# Ok::<(), omni_client::Error>(())
 ```
+
+`chat.history()` / `history_since(since)` read persisted Events; `start_since(-1)`
+attaches for only future Events; and `refresh()` returns the daemon's current snapshot.
+Transport-oriented `Client`, `OpenOptions`, `Session`, `Frame`, and `Request` remain
+available under `silicon_omni::raw` for integrations that need the wire itself.
 
 ---
 
@@ -139,33 +151,34 @@ CLIs can run is plotted by its
 Analysis' blind pairwise scoring of real economically valuable work, anchored so that a
 human expert is 1000 — against the dollars they measured it cost to earn that score.
 
-Only the **left edge** of that graph becomes a dial: a model earns a level if nothing
-else is both better *and* cheaper. Level 10 is the top of the edge, and the dial walks
-down-left from there, so every step down is a real saving and never a sideways move.
+Only the **left edge** of that graph becomes a dial: a model earns a rung if nothing
+else is both better *and* cheaper. Intelligence 10 is the top of the edge, and the dial
+walks down-left from there, so every step down is a real saving and never a sideways
+move.
 
 ```
-lvl    Elo   $/task   model
- 10  1844.7  6.7660   claude-opus-5 max
-  9  1813.8  4.9630   claude-opus-5 xhigh
-  8  1732.8  3.0271   claude-opus-5 high
-  7  1678.9  2.1141   gpt-5.6-sol xhigh
-  6  1621.2  1.3708   gpt-5.6-sol high
-  5  1619.6  1.3641   claude-opus-5 medium
-  4  1578.3  0.1022   gpt-5.6-luna max
-  3  1525.7  0.0667   gpt-5.6-luna xhigh
-  2  1465.8  0.0412   gpt-5.6-luna high
-  1  1274.5  0.0133   gpt-5.6-luna medium
-  0  1155.6  0.0072   gpt-5.6-luna low
+intelligence    Elo   $/task   model
+          10  1844.7  6.7660   claude-opus-5 max
+           9  1813.8  4.9630   claude-opus-5 xhigh
+           8  1732.8  3.0271   claude-opus-5 high
+           7  1678.9  2.1141   gpt-5.6-sol xhigh
+           6  1621.2  1.3708   gpt-5.6-sol high
+           5  1619.6  1.3641   claude-opus-5 medium
+           4  1578.3  0.1022   gpt-5.6-luna max
+           3  1525.7  0.0667   gpt-5.6-luna xhigh
+           2  1465.8  0.0412   gpt-5.6-luna high
+           1  1274.5  0.0133   gpt-5.6-luna medium
+           0  1155.6  0.0072   gpt-5.6-luna low
 ```
 
-Level 4 is worth staring at: GPT-5.6 Luna at max effort scores within 15% of the top of
+Intelligence 4 is worth staring at: GPT-5.6 Luna at max effort scores within 15% of the top of
 the board for **66× less money**, which is why everything between it and Opus 5 falls
 off the edge.
 
 There is one dial per set of providers, because losing a vendor puts models back on the
 dial that another vendor's were shadowing. With fewer providers the edge is shorter and
-levels start sharing a rung — that is the dial telling you there is nothing in between
-worth picking.
+intelligence values start sharing a rung — that is the dial telling you there is nothing
+in between worth picking.
 
 **omni does none of this arithmetic, and knows the name of no model.** It asks
 `omni.teamofsilicons.com/intelligence.json` for the finished map matching the providers
@@ -216,6 +229,13 @@ else, and has no business sitting in your logs.
 
 Handlers run on one thread, in the order things actually happened. A handler that raises
 is reported and stepped over — it cannot take the run down.
+
+The names are identical on every public surface. Python calls the discriminator
+`event.type`; Rust calls it `event.event_type` because `type` is reserved, but serializes
+it as `type`. `event.kind` is only the classification of an `ERROR`, never the Event's
+type. `history` means a finite persisted query, while `on_event` and `logs` deliver live
+Events. The complete contract, including lifecycle verbs and compatibility aliases, is
+in [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md).
 
 ---
 
@@ -306,8 +326,8 @@ persisted list.
 ### Working directory
 
 The first client to create a session pins its current working directory. Python sends
-`os.getcwd()` and the Rust/terminal clients default `OpenOptions` to their current
-directory. Reopening the session somewhere else does not silently move its tools.
+`os.getcwd()`, and Rust and the terminal default a new Chat to their current directory.
+Reopening the session somewhere else does not silently move its tools.
 
 ```python
 chat.cwd("/another/repository")
@@ -394,6 +414,9 @@ provider's **own** session and how far up the omni log it has already seen:
               "active_providers": ["claude", "google"]}}
 ```
 
+This is the internal version-1 metadata shape, so it retains the key `level` for
+on-disk compatibility. Clients normalize it to `intelligence` before exposing it.
+
 `pending` is the transactional FIFO behind `send` acceptance. Its id is copied to
 `extra.message_id` on the durable `START` or `INJECTED` event that proves provider
 delivery, so crash recovery can reconcile identical messages without guessing by text.
@@ -457,7 +480,7 @@ One account per provider.
 ### When a login dies mid-run
 
 An unauthenticated CLI cannot finish the turn it is in. By default omni takes that
-provider off the chat, resolves the **same intelligence level** again over whoever is
+provider off the chat, resolves the **same intelligence value** again over whoever is
 left, and carries on there — you get an `ERROR`/`auth`, a `CONFIG`/`provider_removed`
 and a `SWITCH_PROVIDER`, and the conversation continues on another vendor's model.
 

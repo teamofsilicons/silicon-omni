@@ -24,11 +24,11 @@ class Link:
     """A connection to the daemon.
 
     Two kinds of caller want different things. A one-off question — which
-    providers are logged in, what does level 7 mean — wants :meth:`shared`, the
-    connection this process keeps for asking things. A session wants
-    :meth:`open`: its own connection, because *the connection is the
-    subscription*. Two sessions sharing one would be two subscriptions the
-    daemon cannot tell apart, and detaching one would detach both.
+    providers are logged in, what does intelligence 7 mean — wants
+    :meth:`shared`, the connection this process keeps for asking things. A
+    session wants :meth:`open`: its own connection, because *the connection is
+    the subscription*. Two sessions sharing one would be two subscriptions
+    the daemon cannot tell apart, and detaching one would detach both.
     """
 
     _shared: "Link | None" = None

@@ -148,8 +148,8 @@ def install(*names: str, rungs: Sequence[dict] = ()) -> list[str]:
     """Register test providers and pin dials for them, reaching no network.
 
     With no arguments you get one provider called ``test``, running a different
-    model name at every level. Name several and the dial is spread over them,
-    strongest first — pass ``rungs`` to say exactly which sits where.
+    model name at every intelligence value. Name several and the dial is spread
+    over them, strongest first — pass ``rungs`` to say exactly which sits where.
     """
     return call(
         "test",

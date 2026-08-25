@@ -18,6 +18,7 @@ come back, and the provider is still warm.
 import os
 import queue
 import threading
+import warnings
 from typing import Callable, Sequence
 
 from .client import DaemonError, Link
@@ -27,6 +28,21 @@ IDLE = "idle"
 WAITING = "waiting"
 BUSY = "busy"
 STOPPED = "stopped"
+
+
+def _normalize_snapshot(snapshot: dict) -> dict:
+    """Return the public Python spelling of a daemon session snapshot.
+
+    Daemons before 0.5 called the user-facing intelligence setting ``level``.
+    Keep accepting that wire spelling so a newly upgraded Python client can
+    still talk to an already-running daemon, but never leak it through the
+    public Python state.
+    """
+    normalized = dict(snapshot)
+    if "intelligence" not in normalized and "level" in normalized:
+        normalized["intelligence"] = normalized["level"]
+    normalized.pop("level", None)
+    return normalized
 
 
 class Bus:
@@ -113,12 +129,18 @@ class Chat:
         self.providers = list(providers)
         self.change("providers", self.providers)
 
-    def intelligence(self, level: int) -> None:
+    def intelligence(self, value: int) -> None:
         """0-10 across every active provider. May change model *and* provider."""
-        self.change("level", int(level))
+        self.change("intelligence", int(value))
 
-    #: the spelling used in the README's example
-    inteligence = intelligence
+    def inteligence(self, value: int) -> None:
+        """Deprecated misspelling of :meth:`intelligence`."""
+        warnings.warn(
+            "Chat.inteligence() is deprecated; use Chat.intelligence()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.intelligence(value)
 
     def system_prompt(self, text: str) -> None:
         """Replace the provider's own session prompt."""
@@ -167,6 +189,15 @@ class Chat:
         """
         self.change("autoremove", False)
 
+    def enable_autoremoving_unauthenticated_providers(self) -> None:
+        """Drop an unauthenticated provider and continue elsewhere.
+
+        This is the default. The explicit method pairs with
+        :meth:`disable_autoremoving_unauthenticated_providers` so callers can
+        set the policy from a boolean without relying on defaults.
+        """
+        self.change("autoremove", True)
+
     def cwd(self, path: str) -> None:
         """Where the provider runs its tools.
 
@@ -186,11 +217,20 @@ class Chat:
     # ------------------------------------------------------------- callbacks
 
     def on_event(self, fn: Callable[[Event], None]) -> Callable:
-        """Decorator. Every event, as it happens."""
+        """Decorator. Every daemon event this client receives, in order.
+
+        That includes requested replay and bookkeeping events such as
+        ``CONFIG``. Each one is also a durable member of :meth:`history`.
+        """
         return self.events.subscribe(fn)
 
     def logs(self, fn: Callable[[Event], None]) -> Callable:
-        """Decorator. Everything ``on_event`` sees, plus omni's own bookkeeping."""
+        """Decorator. Every daemon event, plus local callback failures.
+
+        A local ``ERROR``/``handler`` record has no sequence number and is not
+        persisted, because it describes this Python process rather than the
+        shared conversation. There is no second daemon log schema.
+        """
         return self.log.subscribe(fn)
 
     def handler_failed(self, exc, fn, event) -> None:
@@ -239,6 +279,21 @@ class Chat:
     def model(self) -> str:
         return self.state.get("model", "")
 
+    @property
+    def effort(self) -> str:
+        """The current provider's effort setting, if it reports one."""
+        return self.state.get("effort", "")
+
+    @property
+    def current_intelligence(self) -> int | None:
+        """The active 0-10 intelligence setting, once the daemon has reported it.
+
+        This is deliberately separate from :meth:`intelligence`, which asks
+        for a future setting change and remains callable.
+        """
+        value = self.state.get("intelligence")
+        return int(value) if value is not None else None
+
     def start(self, since: int = 0) -> "Chat":
         """Open the session and start hearing about it.
 
@@ -283,7 +338,8 @@ class Chat:
                     **{"from": since},
                 )
                 with self._state_lock:
-                    self.state = result.get("snapshot") or self.state
+                    snapshot = result.get("snapshot")
+                    self.state = _normalize_snapshot(snapshot) if snapshot else self.state
             except BaseException:
                 # ``open`` may have reached the daemon even if its reply did
                 # not reach us. Closing this connection makes the daemon drop
@@ -447,14 +503,16 @@ class Chat:
             self.start(since=self.seen + 1)
         result = self.connection.call("status", session=self.session_id)
         with self._state_lock:
-            self.state = result.get("snapshot") or self.state
+            snapshot = result.get("snapshot")
+            self.state = _normalize_snapshot(snapshot) if snapshot else self.state
             return self.state.copy()
 
     def history(self, since: int = 0) -> list[Event]:
-        """Every event this session has ever recorded, from ``since`` on.
+        """Every persisted daemon event from sequence ``since`` onward.
 
-        Read straight out of the log, so it works whether or not the session is
-        open, and whoever wrote it.
+        Read straight from the shared session event log, so it works whether
+        or not this client is attached. Python-local callback failures sent to
+        :meth:`logs` are not part of that durable history.
         """
         result = self.link.call("events", session=self.session_id, **{"from": since})
         return [Event.from_dict(item) for item in result.get("events", [])]
@@ -463,7 +521,7 @@ class Chat:
         return self.start()
 
     def __exit__(self, *exc) -> None:
-        self.stop()
+        self.detach()
 
     # ----------------------------------------------------------- the stream
 
@@ -522,7 +580,10 @@ class Chat:
                     if frame.get("stream") == "gone":
                         with self._state_lock:
                             self._awaiting.clear()
-                            self.state = frame.get("snapshot") or self.state
+                            snapshot = frame.get("snapshot")
+                            self.state = (
+                                _normalize_snapshot(snapshot) if snapshot else self.state
+                            )
                             self.state["status"] = STOPPED
                         self.opened = False
                         self.finished = True
@@ -531,7 +592,8 @@ class Chat:
                     # goes out, so nothing here has to infer it a second time.
                     event = Event.from_dict(frame.get("event") or {})
                     with self._state_lock:
-                        self.state = frame.get("snapshot") or self.state
+                        snapshot = frame.get("snapshot")
+                        self.state = _normalize_snapshot(snapshot) if snapshot else self.state
                         if event.seq > self.seen:
                             self.seen = event.seq
                         if event.type in (Event.START, Event.INJECTED):

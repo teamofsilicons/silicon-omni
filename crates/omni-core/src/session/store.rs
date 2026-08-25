@@ -19,6 +19,7 @@ pub struct Store {
     pub path: PathBuf,
     events: Vec<Event>,
     load_error: Option<String>,
+    appender: Option<jsonl::Appender>,
 }
 
 impl Store {
@@ -48,7 +49,7 @@ impl Store {
                 });
                 break;
             }
-            if event.kind.is_empty() {
+            if event.event_type.is_empty() {
                 load_error.get_or_insert_with(|| {
                     format!(
                         "invalid event on line {}: type cannot be empty",
@@ -86,6 +87,7 @@ impl Store {
             path,
             events,
             load_error,
+            appender: None,
         }
     }
 
@@ -109,7 +111,7 @@ impl Store {
         self.events.iter().fold(-1, |turn, event| {
             if event.turn >= 0 {
                 turn.max(event.turn)
-            } else if event.is(crate::events::kind::START) {
+            } else if event.is(crate::events::event_type::START) {
                 turn + 1
             } else {
                 turn
@@ -129,10 +131,24 @@ impl Store {
         if event.session.is_empty() {
             event.session = self.session_id.clone();
         }
-        if let Some(parent) = self.path.parent() {
-            paths::ensure(parent)?;
+        let needs_appender = self
+            .appender
+            .as_ref()
+            .is_none_or(|appender| appender.path() != self.path);
+        if needs_appender {
+            if let Some(parent) = self.path.parent() {
+                paths::ensure(parent)?;
+            }
+            // Construct the replacement completely before dropping a healthy
+            // writer. Besides making path changes in tests recoverable, this
+            // keeps an open failure from damaging the live Store's state.
+            let appender = jsonl::Appender::open(&self.path)?;
+            self.appender = Some(appender);
         }
-        jsonl::append(&self.path, &event.to_value())?;
+        self.appender
+            .as_mut()
+            .expect("initialized immediately above")
+            .append(&event.to_value())?;
         self.events.push(event.clone());
         Ok(event)
     }
@@ -166,7 +182,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::kind;
+    use crate::events::event_type;
     use crate::testing::scratch_home;
     use std::io::Write;
 
@@ -175,7 +191,7 @@ mod tests {
         let _home = scratch_home("store-seq");
         let mut store = Store::open("s");
         for _ in 0..3 {
-            store.append(Event::new(kind::TEXT)).unwrap();
+            store.append(Event::new(event_type::TEXT)).unwrap();
         }
         assert_eq!(store.seq(), 2);
         assert_eq!(
@@ -184,7 +200,10 @@ mod tests {
             "picked up where the file left off"
         );
         assert_eq!(
-            Store::open("s").append(Event::new(kind::TEXT)).unwrap().seq,
+            Store::open("s")
+                .append(Event::new(event_type::TEXT))
+                .unwrap()
+                .seq,
             3
         );
     }
@@ -193,12 +212,14 @@ mod tests {
     fn history_is_the_conversation_and_nothing_else() {
         let _home = scratch_home("store-history");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::START).saying("hi")).unwrap();
+        store
+            .append(Event::new(event_type::START).saying("hi"))
+            .unwrap();
         store.append(Event::config("launch")).unwrap();
         store
-            .append(Event::new(kind::TEXT).saying("hello"))
+            .append(Event::new(event_type::TEXT).saying("hello"))
             .unwrap();
-        store.append(Event::new(kind::END)).unwrap();
+        store.append(Event::new(event_type::END)).unwrap();
         let said: Vec<String> = store.history(0).into_iter().map(|e| e.text).collect();
         assert_eq!(said, vec!["hi", "hello"]);
         assert_eq!(store.events(0).len(), 4, "the log itself keeps everything");
@@ -208,9 +229,13 @@ mod tests {
     fn since_is_where_a_provider_left_off() {
         let _home = scratch_home("store-since");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::TEXT).saying("old")).unwrap();
+        store
+            .append(Event::new(event_type::TEXT).saying("old"))
+            .unwrap();
         let mark = store.seq();
-        store.append(Event::new(kind::TEXT).saying("new")).unwrap();
+        store
+            .append(Event::new(event_type::TEXT).saying("new"))
+            .unwrap();
         let said: Vec<String> = store
             .history(mark + 1)
             .into_iter()
@@ -223,9 +248,9 @@ mod tests {
     fn turn_continues_across_versioned_and_pre_versioned_logs() {
         let _home = scratch_home("store-turn");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::START)).unwrap();
-        store.append(Event::new(kind::END)).unwrap();
-        let mut next = Event::new(kind::START);
+        store.append(Event::new(event_type::START)).unwrap();
+        store.append(Event::new(event_type::END)).unwrap();
+        let mut next = Event::new(event_type::START);
         next.turn = 1;
         store.append(next).unwrap();
         assert_eq!(store.turn(), 1);
@@ -241,21 +266,62 @@ mod tests {
         std::fs::write(&blocker, "a regular file").unwrap();
         store.path = blocker.join("s.jsonl");
 
-        assert!(store.append(Event::new(kind::TEXT).saying("lost")).is_err());
+        assert!(
+            store
+                .append(Event::new(event_type::TEXT).saying("lost"))
+                .is_err()
+        );
         assert_eq!(store.seq(), -1);
         assert!(store.events(0).is_empty());
 
         store.path = valid_path;
-        let saved = store.append(Event::new(kind::TEXT).saying("kept")).unwrap();
+        let saved = store
+            .append(Event::new(event_type::TEXT).saying("kept"))
+            .unwrap();
         assert_eq!(saved.seq, 0, "the failed event did not consume seq 0");
         assert_eq!(store.events(0).len(), 1);
+    }
+
+    #[test]
+    fn a_failed_writer_replacement_keeps_the_live_log_and_sequence_usable() {
+        let _home = scratch_home("store-writer-replacement-failure");
+        let mut store = Store::open("s");
+        store
+            .append(Event::new(event_type::TEXT).saying("before"))
+            .unwrap();
+        let valid_path = store.path.clone();
+        let blocker = paths::home().join("not-a-directory");
+        std::fs::write(&blocker, "a regular file").unwrap();
+        store.path = blocker.join("s.jsonl");
+
+        assert!(
+            store
+                .append(Event::new(event_type::TEXT).saying("lost"))
+                .is_err()
+        );
+        assert_eq!(store.seq(), 0);
+        assert_eq!(store.events(0).len(), 1);
+
+        store.path = valid_path;
+        let saved = store
+            .append(Event::new(event_type::TEXT).saying("after"))
+            .unwrap();
+        assert_eq!(saved.seq, 1, "the failed event did not consume seq 1");
+        let durable: Vec<String> = Store::open("s")
+            .events(0)
+            .into_iter()
+            .map(|event| event.text)
+            .collect();
+        assert_eq!(durable, vec!["before", "after"]);
     }
 
     #[test]
     fn complete_json_corruption_is_retained_and_blocks_append() {
         let _home = scratch_home("store-malformed-json");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::TEXT).saying("safe")).unwrap();
+        store
+            .append(Event::new(event_type::TEXT).saying("safe"))
+            .unwrap();
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(&store.path)
@@ -277,7 +343,10 @@ mod tests {
             "the malformed complete record is not silently filtered"
         );
         assert_eq!(
-            reopened.append(Event::new(kind::TEXT)).unwrap_err().kind(),
+            reopened
+                .append(Event::new(event_type::TEXT))
+                .unwrap_err()
+                .kind(),
             std::io::ErrorKind::InvalidData
         );
     }
@@ -348,8 +417,10 @@ mod tests {
     fn a_valid_unterminated_event_keeps_its_sequence_before_the_next_append() {
         let _home = scratch_home("store-valid-tail-seq");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::TEXT).saying("zero")).unwrap();
-        let mut tail = Event::new(kind::TEXT).saying("one");
+        store
+            .append(Event::new(event_type::TEXT).saying("zero"))
+            .unwrap();
+        let mut tail = Event::new(event_type::TEXT).saying("one");
         tail.session = "s".into();
         tail.seq = 1;
         let mut file = std::fs::OpenOptions::new()
@@ -363,7 +434,7 @@ mod tests {
         let mut reopened = Store::open("s");
         assert!(reopened.load_error().is_none());
         assert_eq!(reopened.seq(), 1);
-        assert_eq!(reopened.append(Event::new(kind::END)).unwrap().seq, 2);
+        assert_eq!(reopened.append(Event::new(event_type::END)).unwrap().seq, 2);
 
         let final_store = Store::open("s");
         let sequences: Vec<i64> = final_store
@@ -379,7 +450,9 @@ mod tests {
     fn a_torn_unterminated_event_is_removed_without_reusing_a_sequence() {
         let _home = scratch_home("store-torn-tail-seq");
         let mut store = Store::open("s");
-        store.append(Event::new(kind::TEXT).saying("zero")).unwrap();
+        store
+            .append(Event::new(event_type::TEXT).saying("zero"))
+            .unwrap();
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(&store.path)
@@ -393,7 +466,7 @@ mod tests {
             reopened.load_error().is_none(),
             "a partial final write is tolerated"
         );
-        assert_eq!(reopened.append(Event::new(kind::END)).unwrap().seq, 1);
+        assert_eq!(reopened.append(Event::new(event_type::END)).unwrap().seq, 1);
 
         let final_store = Store::open("s");
         let sequences: Vec<i64> = final_store

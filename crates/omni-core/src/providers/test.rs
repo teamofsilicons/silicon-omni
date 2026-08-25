@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::{Value, json};
 
-use crate::events::{CRASH, Event, kind};
+use crate::events::{CRASH, Event, event_type};
 use crate::intelligence::{Rung, key, write_cache};
 use crate::providers::base::{AUTHENTICATED, Account, Config, Delivery, Emit, Runner};
 use crate::translate::transcript;
@@ -87,6 +87,7 @@ struct State {
     pending_seed: bool,
     resumed: bool,
     retuned: usize,
+    starts: usize,
 }
 
 /// The live double, shared between the session that runs it and whoever is
@@ -119,8 +120,8 @@ impl Live {
 
     /// Answer and close the turn. For when `autoreply` is off.
     pub fn reply(&self, text: &str) {
-        self.say(Event::new(kind::TEXT).saying(text));
-        self.say(Event::new(kind::END).with("stop", "complete"));
+        self.say(Event::new(event_type::TEXT).saying(text));
+        self.say(Event::new(event_type::END).with("stop", "complete"));
     }
 
     /// Break the way a real CLI breaks.
@@ -136,7 +137,7 @@ impl Live {
         };
         self.say(Event::failure(fault, said));
         if ends {
-            self.say(Event::new(kind::END));
+            self.say(Event::new(event_type::END));
         }
     }
 
@@ -172,6 +173,11 @@ impl Live {
 
     pub fn retuned(&self) -> usize {
         self.state.lock().unwrap_or_else(|p| p.into_inner()).retuned
+    }
+
+    /// How many times a runner for this provider was brought up.
+    pub fn starts(&self) -> usize {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).starts
     }
 
     pub fn up(&self) -> bool {
@@ -275,6 +281,7 @@ impl Runner for Double {
         state.sent.clear();
         state.pending_seed = deferred;
         state.retuned = 0;
+        state.starts += 1;
         state.up = true;
         Ok(())
     }
@@ -297,7 +304,7 @@ impl Runner for Double {
         if !self.live.knobs().autoreply {
             return Ok(Delivery::Immediate);
         }
-        self.live.say(Event::new(kind::THINKING));
+        self.live.say(Event::new(event_type::THINKING));
         let turn = self
             .live
             .state
@@ -307,20 +314,20 @@ impl Runner for Double {
             .len();
         for tool in Live::tools(text) {
             let id = format!("{}-{turn}-{tool}", self.native_id());
-            let mut call = Event::new(kind::TOOL_CALL);
+            let mut call = Event::new(event_type::TOOL_CALL);
             call.tool = tool.clone();
             call.id = id.clone();
             call.args.insert("input".into(), json!(tool));
             self.live.say(call);
-            let mut result = Event::new(kind::TOOL_RESULT);
+            let mut result = Event::new(event_type::TOOL_RESULT);
             result.tool = tool.clone();
             result.id = id;
             result.result = json!(format!("ran {tool}"));
             self.live.say(result);
         }
-        self.live.say(Event::new(kind::TEXT).saying(answer));
+        self.live.say(Event::new(event_type::TEXT).saying(answer));
         self.live
-            .say(Event::new(kind::END).with("stop", "complete"));
+            .say(Event::new(event_type::END).with("stop", "complete"));
         Ok(Delivery::Immediate)
     }
 

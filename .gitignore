@@ -5,7 +5,9 @@ dist/
 build/
 *.egg-info/
 .venv/
+.keys
 node_modules/
 .next/
 .vercel
 target/
+.keys

@@ -191,7 +191,7 @@ impl Daemon {
         json!({"sessions": live})
     }
 
-    /// What each level 0-10 resolves to, for a set of providers.
+    /// What each intelligence value from 0-10 resolves to for these providers.
     fn dial(&self, request: &Request) -> Result<Value, String> {
         let named = match request.providers.clone() {
             Some(named) if !named.is_empty() => named,
@@ -207,7 +207,7 @@ impl Daemon {
         Ok(json!(
             table
                 .into_iter()
-                .map(|(level, rung)| (level.to_string(), rung))
+                .map(|(intelligence, rung)| (intelligence.to_string(), rung))
                 .collect::<std::collections::BTreeMap<_, _>>()
         ))
     }
@@ -325,7 +325,7 @@ fn change_from(what: &str, value: &Value) -> Result<Change, String> {
     Ok(match what {
         "providers" => Change::Providers(strings(value)?),
         "level" | "intelligence" => {
-            Change::Level(value.as_i64().ok_or("intelligence takes a number")?)
+            Change::Intelligence(value.as_i64().ok_or("intelligence takes a number")?)
         }
         "system_prompt" => Change::SystemPrompt(text_of(value)?),
         "append_system_prompt" => Change::AppendSystemPrompt(text_of(value)?),
@@ -522,7 +522,7 @@ mod tests {
         let _home = scratch_home("serve-corrupt-events");
         std::fs::create_dir_all(omni_core::shared::paths::sessions()).unwrap();
         let path = omni_core::shared::paths::session_file("s");
-        let valid = omni_core::events::Event::new(omni_core::events::kind::TEXT)
+        let valid = omni_core::events::Event::new(omni_core::events::event_type::TEXT)
             .saying("known prefix")
             .to_value();
         std::fs::write(&path, format!("{valid}\n{{not valid json}}\n")).unwrap();

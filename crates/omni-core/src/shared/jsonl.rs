@@ -6,7 +6,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -82,6 +82,83 @@ pub fn append(path: &Path, value: &Value) -> std::io::Result<()> {
     extend(path, std::slice::from_ref(value))
 }
 
+/// One exclusive, long-lived writer for a JSONL file.
+///
+/// The generic [`append`] and [`extend`] helpers reopen and revalidate a file
+/// because they cannot know who else may have touched it between calls. A live
+/// session has a stronger invariant: its conductor is the only writer. Keeping
+/// that descriptor avoids an open, chmod, stat, seek, and tail read for every
+/// event while retaining the same `sync_data` durability boundary.
+///
+/// This is crate-private deliberately. Two persistent appenders for one path
+/// would violate the exclusive-writer invariant; callers without that guarantee
+/// must use [`append`] or [`extend`].
+pub(crate) struct Appender {
+    path: PathBuf,
+    file: Option<File>,
+    prefix_newline: bool,
+}
+
+impl Appender {
+    pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        let _guard = WRITE.lock().unwrap_or_else(|poison| poison.into_inner());
+        let existed = path.exists();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)?;
+        // `mode` only applies on creation. Repair logs written by an older
+        // release once when this live writer takes ownership of them.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        let prefix_newline = repair_tail(&mut file)?;
+        if !existed {
+            if let Some(parent) = path.parent() {
+                // The descriptor will sync every event's contents. Make its
+                // directory entry durable once, when the descriptor is born.
+                File::open(parent)?.sync_all()?;
+            }
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            file: Some(file),
+            prefix_newline,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn append(&mut self, value: &Value) -> io::Result<()> {
+        let mut body = value.to_string();
+        body.push('\n');
+        if self.prefix_newline {
+            body.insert(0, '\n');
+        }
+
+        // Once a write has begun, an error leaves its extent uncertain. Poison
+        // this descriptor rather than letting a caller append another record
+        // behind a possibly partial line. The conductor treats any such failure
+        // as terminal; a cold reopen can perform ordinary torn-tail recovery.
+        self.prefix_newline = false;
+        let result = match self.file.as_mut() {
+            Some(file) => file
+                .write_all(body.as_bytes())
+                .and_then(|()| file.sync_data()),
+            None => Err(io::Error::other("JSONL appender is no longer writable")),
+        };
+        if result.is_err() {
+            self.file = None;
+        }
+        result
+    }
+}
+
 /// One write, so a reader never sees half a batch.
 pub fn extend(path: &Path, values: &[Value]) -> std::io::Result<()> {
     if values.is_empty() {
@@ -107,23 +184,8 @@ pub fn extend(path: &Path, values: &[Value]) -> std::io::Result<()> {
     // as it is touched too, since histories can contain credentials and tool
     // output even when the enclosing directory is already private.
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    // A process can die halfway through its last line. Preserve it when it is
-    // complete JSON that merely lacks its delimiter. Otherwise remove only
-    // that partial tail; keeping it as a complete malformed middle line would
-    // make corruption look like an intentionally skipped record forever.
-    let len = file.metadata()?.len();
-    if len > 0 {
-        file.seek(SeekFrom::End(-1))?;
-        let mut last = [0_u8; 1];
-        file.read_exact(&mut last)?;
-        if last[0] != b'\n' {
-            let (tail_start, tail) = unterminated_tail(&mut file, len)?;
-            if serde_json::from_slice::<Value>(&tail).is_ok() {
-                body.insert(0, '\n');
-            } else {
-                file.set_len(tail_start)?;
-            }
-        }
+    if repair_tail(&mut file)? {
+        body.insert(0, '\n');
     }
     file.write_all(body.as_bytes())?;
     // A successful append is the durability boundary used by the conductor:
@@ -137,6 +199,32 @@ pub fn extend(path: &Path, values: &[Value]) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Repair a partial last record, or report that a valid last record merely
+/// needs its missing delimiter before the next append.
+fn repair_tail(file: &mut File) -> io::Result<bool> {
+    // A process can die halfway through its last line. Preserve it when it is
+    // complete JSON that merely lacks its delimiter. Otherwise remove only
+    // that partial tail; keeping it as a complete malformed middle line would
+    // make corruption look like an intentionally skipped record forever.
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    if last[0] == b'\n' {
+        return Ok(false);
+    }
+    let (tail_start, tail) = unterminated_tail(file, len)?;
+    if serde_json::from_slice::<Value>(&tail).is_ok() {
+        Ok(true)
+    } else {
+        file.set_len(tail_start)?;
+        Ok(false)
+    }
 }
 
 /// Locate and copy only the bytes after the final newline, reading backwards
@@ -284,6 +372,61 @@ mod tests {
     }
 
     #[test]
+    fn a_persistent_appender_keeps_writing_one_ordered_log() {
+        let path = scratch("persistent-order");
+        let mut appender = Appender::open(&path).unwrap();
+
+        appender.append(&json!({"n": 1})).unwrap();
+        appender.append(&json!({"n": 2})).unwrap();
+        appender.append(&json!({"n": 3})).unwrap();
+
+        let seen: Vec<i64> = read(&path)
+            .iter()
+            .map(|value| value["n"].as_i64().unwrap())
+            .collect();
+        assert_eq!(seen, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_persistent_appender_preserves_valid_json_missing_its_delimiter() {
+        let path = scratch("persistent-valid-tail");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{\"n\":1}").unwrap();
+
+        let mut appender = Appender::open(&path).unwrap();
+        appender.append(&json!({"n": 2})).unwrap();
+
+        let report = read_checked(&path);
+        assert!(report.error.is_none());
+        let seen: Vec<i64> = report
+            .records
+            .iter()
+            .map(|record| record.value["n"].as_i64().unwrap())
+            .collect();
+        assert_eq!(seen, vec![1, 2]);
+    }
+
+    #[test]
+    fn a_persistent_appender_repairs_a_torn_tail_before_its_first_write() {
+        let path = scratch("persistent-torn-tail");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{\"n\":1}\n{\"n\":2").unwrap();
+
+        let mut appender = Appender::open(&path).unwrap();
+        appender.append(&json!({"n": 3})).unwrap();
+
+        let report = read_checked(&path);
+        assert!(report.error.is_none());
+        let seen: Vec<i64> = report
+            .records
+            .iter()
+            .map(|record| record.value["n"].as_i64().unwrap())
+            .collect();
+        assert_eq!(seen, vec![1, 3]);
+        assert!(!std::fs::read_to_string(path).unwrap().contains("{\"n\":2"));
+    }
+
+    #[test]
     fn a_torn_line_is_skipped_rather_than_fatal() {
         let path = scratch("torn");
         append(&path, &json!({"n": 1})).unwrap();
@@ -377,6 +520,24 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         append(&path, &json!({"secret": true})).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn a_persistent_appender_takes_ownership_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = scratch("persistent-permissions");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut appender = Appender::open(&path).unwrap();
+        appender.append(&json!({"secret": true})).unwrap();
 
         assert_eq!(
             std::fs::metadata(path).unwrap().permissions().mode() & 0o777,

@@ -10,9 +10,13 @@ homepage.workspace = true
 readme.workspace = true
 
 [[bin]]
-name = "omni"
-path = "src/main.rs"
+name = "silicon-omni"
+path = "src/bin/silicon-omni.rs"
+
+[[bin]]
+name = "so"
+path = "src/bin/so.rs"
 
 [dependencies]
-omni-client.workspace = true
+silicon-omni.workspace = true
 serde_json.workspace = true

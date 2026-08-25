@@ -1,20 +1,52 @@
-//! Synchronous client for the persistent silicon omni daemon.
+//! One conversation across Claude, Codex and Antigravity.
 //!
-//! [`Client`] owns one Unix-socket connection and a background reader. Calls
-//! may be made concurrently: replies are matched by request id while session
-//! frames are delivered to [`Subscription`]s. [`Client::open`] combines a
-//! subscription with the daemon's `open` operation so replay frames cannot be
-//! missed even when they arrive before the reply.
+//! The high-level vocabulary matches the Python package and CLI:
+//! [`Inference`] is the front door, a [`Chat`] is a persistent conversation,
+//! and everything it emits is an [`Event`].
 //!
-//! `Client::connect` follows the same convention as the Python package: use an
-//! existing daemon when one is listening, otherwise find and start `omnid`.
-//! Use [`Client::connect_existing`] or [`Client::connect_to`] when starting a
-//! process would be surprising.
+//! ```no_run
+//! use silicon_omni::{Event, Inference};
+//!
+//! # fn main() -> silicon_omni::Result<()> {
+//! let inference = Inference::connect()?;
+//! let mut chat = inference.load_or_create_session("demo", None);
+//! chat.intelligence(7)?.start()?;
+//! chat.send("hello")?;
+//!
+//! for event in chat.events() {
+//!     let event = event?;
+//!     if event.event_type == Event::TEXT {
+//!         println!("{}", event.text);
+//!     }
+//!     if event.event_type == Event::END {
+//!         break;
+//!     }
+//! }
+//! chat.detach()?; // the provider remains warm
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`Client`] and the other items in [`raw`] expose Unix-socket frames and
+//! protocol requests for integrations that need the transport itself.
 
 #![cfg_attr(not(unix), allow(unused))]
 
+mod facade;
+
+pub use facade::{Chat, ChatState, Events, Inference, LiveChat, ProviderHandle};
+
+/// Advanced transport-level types. Most applications should begin with
+/// [`Inference`] and interact with a [`Chat`] instead.
+pub mod raw {
+    pub use super::{
+        Client, Frame, LiveSession, OpenOptions, Opened, Request, Session, Setting, Snapshot,
+        Subscription,
+    };
+}
+
 #[cfg(not(unix))]
-compile_error!("omni-client currently requires Unix-domain sockets");
+compile_error!("silicon-omni currently requires Unix-domain sockets");
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -29,8 +61,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-pub use omni_core::events::kind;
+#[deprecated(note = "use `event_type` or `Event::TEXT` style constants")]
+pub use omni_core::events::event_type as kind;
+pub use omni_core::events::{AUTH, CRASH, LIMIT, UNAVAILABLE, event_type};
 pub use omni_core::intelligence::Rung;
+pub use omni_core::intelligence::Rung as IntelligenceRung;
 pub use omni_core::wire::{Frame, PROTOCOL, Request};
 use omni_core::wire::{Incoming, Reply, read_line};
 pub use omni_core::{Event, Snapshot};
@@ -46,11 +81,13 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A transport, protocol, or daemon failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Error {
+pub enum DaemonError {
     Io(String),
     Json(String),
     /// The daemon answered the request with `ok: false`.
     Daemon(String),
+    /// The registry has never produced a dial for the requested providers.
+    NoDial(String),
     /// No reply arrived before the request deadline.
     Timeout {
         op: String,
@@ -63,13 +100,21 @@ pub enum Error {
     AlreadyOpen(String),
     /// `omnid` was needed but could not be found.
     DaemonUnavailable(String),
+    /// This high-level chat was explicitly stopped and cannot be restarted.
+    Stopped(String),
     Protocol(String),
 }
 
-impl fmt::Display for Error {
+/// Compatibility name for [`DaemonError`].
+pub type Error = DaemonError;
+
+impl fmt::Display for DaemonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Io(message) | Error::Json(message) | Error::Daemon(message) => {
+            Error::Io(message)
+            | Error::Json(message)
+            | Error::Daemon(message)
+            | Error::NoDial(message) => {
                 write!(f, "{message}")
             }
             Error::Timeout { op, after } => {
@@ -79,20 +124,22 @@ impl fmt::Display for Error {
             Error::AlreadyOpen(session) => {
                 write!(f, "session {session:?} is already open on this client")
             }
-            Error::DaemonUnavailable(message) | Error::Protocol(message) => write!(f, "{message}"),
+            Error::DaemonUnavailable(message)
+            | Error::Stopped(message)
+            | Error::Protocol(message) => write!(f, "{message}"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for DaemonError {}
 
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for DaemonError {
     fn from(error: std::io::Error) -> Self {
         Error::Io(error.to_string())
     }
 }
 
-impl From<serde_json::Error> for Error {
+impl From<serde_json::Error> for DaemonError {
     fn from(error: serde_json::Error) -> Self {
         Error::Json(error.to_string())
     }
@@ -359,7 +406,7 @@ impl Client {
         });
         let reader_inner = Arc::downgrade(&inner);
         std::thread::Builder::new()
-            .name("omni-client:reader".into())
+            .name("silicon-omni:reader".into())
             .spawn(move || read_daemon(reading, reader_inner))
             .map_err(|error| Error::Io(format!("cannot start socket reader: {error}")))?;
         Ok(Client { inner })
@@ -526,7 +573,12 @@ impl Client {
     pub fn dial(&self, providers: Option<Vec<String>>) -> Result<BTreeMap<i64, Rung>> {
         let mut request = Request::new(0, "dial");
         request.providers = providers;
-        decode("dial", self.call(request)?)
+        match self.call(request) {
+            Err(Error::Daemon(message)) if message.starts_with("no dial for ") => {
+                Err(Error::NoDial(message))
+            }
+            answer => decode("dial", answer?),
+        }
     }
 
     /// Ask one provider account question (`auth_status`, `installed`,
@@ -866,7 +918,7 @@ pub fn ensure_daemon(timeout: Duration) -> Result<PathBuf> {
     // us. The process we spawned then exits on the daemon lock; reap it instead
     // of leaving a zombie behind in this long-lived client.
     let _ = std::thread::Builder::new()
-        .name("omni-client:daemon-reaper".into())
+        .name("silicon-omni:daemon-reaper".into())
         .spawn(move || {
             let _ = child.wait();
         });
@@ -914,7 +966,7 @@ pub fn wait_until_stopped(timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omni_core::events::kind;
+    use omni_core::events::event_type;
     use serde_json::json;
     use std::os::unix::net::UnixListener;
     use std::sync::mpsc;
@@ -923,7 +975,7 @@ mod tests {
         Snapshot {
             session: session.into(),
             status: "waiting".into(),
-            level: 5,
+            intelligence: 5,
             providers: vec!["test".into()],
             provider: "test".into(),
             model: "double".into(),
@@ -989,7 +1041,7 @@ mod tests {
     #[test]
     fn connecting_rejects_a_daemon_that_speaks_another_protocol() {
         let path = std::env::temp_dir().join(format!(
-            "omni-client-protocol-{}-{:?}.sock",
+            "silicon-omni-protocol-{}-{:?}.sock",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -1038,7 +1090,7 @@ mod tests {
                 &mut writing,
                 &Reply::ok(second.id, json!({"which": second.op})),
             );
-            let event = Event::new(kind::TEXT).saying("between");
+            let event = Event::new(event_type::TEXT).saying("between");
             send_json(
                 &mut writing,
                 &Frame::event("demo", event, snapshot("demo", 1)),
@@ -1071,7 +1123,7 @@ mod tests {
             assert_eq!(request.from, Some(3));
             assert_eq!(request.cwd.as_deref(), Some("/client/work"));
             let mut writing = theirs;
-            let event = Event::new(kind::TEXT).saying("replayed");
+            let event = Event::new(event_type::TEXT).saying("replayed");
             send_json(
                 &mut writing,
                 &Frame::event("demo", event, snapshot("demo", 3)),
@@ -1127,6 +1179,28 @@ mod tests {
             client.call(Request::new(0, "nope")).unwrap_err(),
             Error::Daemon("not today".into())
         );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_missing_intelligence_dial_has_its_own_error() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let client = Client::from_stream(ours).unwrap();
+        let server = std::thread::spawn(move || {
+            let reading = theirs.try_clone().unwrap();
+            let line = BufReader::new(reading).lines().next().unwrap().unwrap();
+            let request: Request = serde_json::from_str(&line).unwrap();
+            assert_eq!(request.op, "dial");
+            let mut writing = theirs;
+            send_json(
+                &mut writing,
+                &Reply::failed(request.id, "no dial for [\"test\"]: offline"),
+            );
+        });
+        assert!(matches!(
+            client.dial(Some(vec!["test".into()])),
+            Err(Error::NoDial(_))
+        ));
         server.join().unwrap();
     }
 

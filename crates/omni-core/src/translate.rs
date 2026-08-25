@@ -21,7 +21,7 @@
 
 use serde_json::Value;
 
-use crate::events::{Event, kind};
+use crate::events::{Event, event_type};
 
 pub const SEED_HEADER: &str = "Earlier in this conversation (carried over from another model, \
 shown as a transcript — do not re-run anything in it):";
@@ -44,16 +44,16 @@ pub fn readable(value: &Value, quote: bool) -> String {
 
 /// One history event as the text a foreign provider should read.
 pub fn render(event: &Event) -> String {
-    match event.kind.as_str() {
-        kind::START | kind::INJECTED | kind::TEXT => event.text.clone(),
-        kind::TOOL_CALL => {
+    match event.event_type.as_str() {
+        event_type::START | event_type::INJECTED | event_type::TEXT => event.text.clone(),
+        event_type::TOOL_CALL => {
             let body = match event.args.len() {
                 1 => readable(event.args.values().next().unwrap_or(&Value::Null), true),
                 _ => readable(&Value::Object(event.args.clone()), false),
             };
             format!("[{}: {}]", event.tool, body)
         }
-        kind::TOOL_RESULT => {
+        event_type::TOOL_RESULT => {
             let tool = if event.tool.is_empty() {
                 "tool"
             } else {
@@ -70,8 +70,8 @@ pub fn render(event: &Event) -> String {
 }
 
 fn role_of(event: &Event) -> &'static str {
-    match event.kind.as_str() {
-        kind::START | kind::INJECTED => "user",
+    match event.event_type.as_str() {
+        event_type::START | event_type::INJECTED => "user",
         _ => "assistant",
     }
 }
@@ -116,7 +116,7 @@ mod tests {
     use serde_json::json;
 
     fn call(tool: &str, args: Value) -> Event {
-        let mut event = Event::new(kind::TOOL_CALL);
+        let mut event = Event::new(event_type::TOOL_CALL);
         event.tool = tool.into();
         event.args = args.as_object().cloned().unwrap_or_default();
         event
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn a_failed_result_says_so() {
-        let mut event = Event::new(kind::TOOL_RESULT);
+        let mut event = Event::new(event_type::TOOL_RESULT);
         event.tool = "Bash".into();
         event.ok = false;
         event.result = json!("no such file");
@@ -150,18 +150,18 @@ mod tests {
 
     #[test]
     fn thinking_carries_nothing_across() {
-        assert_eq!(render(&Event::new(kind::THINKING)), "");
+        assert_eq!(render(&Event::new(event_type::THINKING)), "");
     }
 
     #[test]
     fn one_side_speaking_twice_is_one_turn() {
         let events = vec![
-            Event::new(kind::START).saying("hi"),
-            Event::new(kind::TEXT).saying("hello"),
+            Event::new(event_type::START).saying("hi"),
+            Event::new(event_type::TEXT).saying("hello"),
             call("Bash", json!({"command": "ls"})),
-            Event::new(kind::THINKING),
-            Event::new(kind::TEXT).saying("done"),
-            Event::new(kind::INJECTED).saying("wait"),
+            Event::new(event_type::THINKING),
+            Event::new(event_type::TEXT).saying("done"),
+            Event::new(event_type::INJECTED).saying("wait"),
         ];
         let turns = transcript(&events);
         assert_eq!(turns.len(), 3);
@@ -173,14 +173,17 @@ mod tests {
     #[test]
     fn nothing_to_say_is_nothing_at_all() {
         assert_eq!(flatten(&[], SEED_HEADER), "");
-        assert_eq!(flatten(&[Event::new(kind::THINKING)], SEED_HEADER), "");
+        assert_eq!(
+            flatten(&[Event::new(event_type::THINKING)], SEED_HEADER),
+            ""
+        );
     }
 
     #[test]
     fn flattening_keeps_who_said_what() {
         let events = vec![
-            Event::new(kind::START).saying("hi"),
-            Event::new(kind::TEXT).saying("hello"),
+            Event::new(event_type::START).saying("hi"),
+            Event::new(event_type::TEXT).saying("hello"),
         ];
         assert_eq!(
             flatten(&events, "EARLIER:"),
@@ -191,7 +194,7 @@ mod tests {
     #[test]
     fn nothing_is_trimmed_however_long_it_is() {
         let long = "x".repeat(50_000);
-        let mut event = Event::new(kind::TOOL_RESULT);
+        let mut event = Event::new(event_type::TOOL_RESULT);
         event.tool = "Read".into();
         event.result = json!(long);
         assert!(render(&event).len() > 50_000);

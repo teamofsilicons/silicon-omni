@@ -9,12 +9,154 @@ import threading
 from pathlib import Path
 
 import pytest
-
 from conftest import in_turn, settled
+
+import omni.inference as inference_module
 from omni import Event, Inference, NoDial
 from omni.chat import Chat
 from omni.client import DaemonError, Link
 from omni.providers import test as double
+
+# ------------------------------------------------------------- vocabulary
+
+def test_python_sends_intelligence_and_normalizes_old_snapshot_spelling(
+    monkeypatch, name
+):
+    class StubLink:
+        alive = True
+
+        def __init__(self):
+            self.requests = []
+            self.listener = None
+
+        def listen(self, session, handler):
+            self.listener = handler
+
+        def unlisten(self, session):
+            self.listener = None
+
+        def call(self, op, **fields):
+            self.requests.append((op, fields))
+            if op == "open":
+                return {
+                    "snapshot": {
+                        "session": name,
+                        "status": "waiting",
+                        "level": 7,
+                        "effort": "high",
+                        "seq": -1,
+                        "queued": 0,
+                        "in_turn": False,
+                    }
+                }
+            if op == "status":
+                return {
+                    "snapshot": {
+                        "session": name,
+                        "status": "waiting",
+                        "level": 6,
+                        "effort": "medium",
+                        "seq": -1,
+                        "queued": 0,
+                        "in_turn": False,
+                    }
+                }
+            return {}
+
+        def close(self):
+            self.alive = False
+
+    link = StubLink()
+    monkeypatch.setattr(Link, "open", classmethod(lambda cls: link))
+
+    chat = Chat(name, [])
+    chat.intelligence(7)
+    chat.start()
+    assert link.requests[0][0] == "open"
+    assert link.requests[0][1]["value"] == [
+        {"what": "intelligence", "value": 7}
+    ]
+    assert chat.current_intelligence == 7
+    assert chat.effort == "high"
+    assert "level" not in chat.state
+
+    chat.intelligence(8)
+    assert link.requests[-1] == (
+        "set",
+        {"session": name, "what": "intelligence", "value": 8},
+    )
+
+    refreshed = chat.refresh()
+    assert refreshed["intelligence"] == 6
+    assert refreshed["effort"] == "medium"
+    assert "level" not in refreshed
+    chat.detach()
+
+
+def test_the_misspelled_intelligence_method_is_only_a_deprecated_alias(name):
+    chat = Chat(name, [])
+    with pytest.warns(DeprecationWarning, match="Chat.intelligence"):
+        chat.inteligence(4)
+    assert chat.pending == [("intelligence", 4)]
+
+
+def test_public_session_snapshots_call_the_setting_intelligence(monkeypatch):
+    monkeypatch.setattr(
+        inference_module,
+        "call",
+        lambda op: {
+            "sessions": [
+                {
+                    "listeners": 1,
+                    "snapshot": {
+                        "session": "demo",
+                        "status": "waiting",
+                        "level": 5,
+                        "effort": "medium",
+                    },
+                }
+            ]
+        },
+    )
+
+    snapshot = Inference.sessions()[0]["snapshot"]
+    assert snapshot["intelligence"] == 5
+    assert snapshot["effort"] == "medium"
+    assert "level" not in snapshot
+
+
+def test_public_dial_rungs_normalize_an_old_daemons_level(monkeypatch):
+    monkeypatch.setattr(
+        inference_module,
+        "call",
+        lambda *args, **kwargs: {
+            "7": {"provider": "claude", "model": "sonnet", "level": 7}
+        },
+    )
+
+    rung = Inference.dial()["7"]
+    assert rung["intelligence"] == 7
+    assert "level" not in rung
+
+
+def test_unauthenticated_provider_autoremoval_has_both_toggles(name):
+    chat = Chat(name, [])
+    chat.disable_autoremoving_unauthenticated_providers()
+    chat.enable_autoremoving_unauthenticated_providers()
+    assert chat.pending == [("autoremove", False), ("autoremove", True)]
+
+
+def test_a_chat_context_detaches_instead_of_stopping(name):
+    calls = []
+    chat = Chat(name, [])
+    chat.start = lambda since=0: calls.append("start") or chat
+    chat.detach = lambda: calls.append("detach")
+    chat.stop = lambda: calls.append("stop")
+
+    with chat as attached:
+        assert attached is chat
+
+    assert calls == ["start", "detach"]
 
 
 # ---------------------------------------------------------------- one turn

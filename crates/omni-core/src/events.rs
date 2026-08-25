@@ -28,7 +28,7 @@ use crate::shared::clock;
 /// | `SWITCH_PROVIDER` | `provider` (the new one), `extra["from"]` |
 /// | `NEW_SESSION` | `provider`, `extra["native"]` |
 /// | `CONFIG` | `text` — what changed, `extra` — the new value |
-pub mod kind {
+pub mod event_type {
     pub const START: &str = "start";
     pub const TEXT: &str = "text";
     pub const THINKING: &str = "thinking";
@@ -40,7 +40,6 @@ pub mod kind {
     pub const SWITCH_PROVIDER: &str = "switch_provider";
     pub const NEW_SESSION: &str = "new_session";
     pub const CONFIG: &str = "config";
-    pub const SEED: &str = "seed";
 }
 
 /// Current JSONL/wire schema. Records written before this field existed default
@@ -56,12 +55,12 @@ pub const CRASH: &str = "crash";
 /// Event types that carry conversation content, i.e. the ones replayed into a
 /// provider when a session is seeded. Everything else is bookkeeping.
 pub const HISTORY_TYPES: &[&str] = &[
-    kind::START,
-    kind::INJECTED,
-    kind::TEXT,
-    kind::THINKING,
-    kind::TOOL_CALL,
-    kind::TOOL_RESULT,
+    event_type::START,
+    event_type::INJECTED,
+    event_type::TEXT,
+    event_type::THINKING,
+    event_type::TOOL_CALL,
+    event_type::TOOL_RESULT,
 ];
 
 /// One thing that happened.
@@ -81,8 +80,9 @@ pub struct Event {
     /// defaulted to the first schema when they are read back.
     #[serde(default = "schema_version")]
     pub v: i64,
+    /// What happened. Serialized as `type`, matching Python and the JSONL log.
     #[serde(rename = "type")]
-    pub kind: String,
+    pub event_type: String,
     /// The cross-provider omni session this durable event belongs to.
     #[serde(default, skip_serializing_if = "str::is_empty")]
     pub session: String,
@@ -105,11 +105,11 @@ pub struct Event {
     /// Which sort of failure, when `type` is `error`: one of `auth` / `limit` /
     /// `unavailable` / `crash` from the model or its CLI, `stderr` for CLI
     /// chatter, `omni` when the engine itself failed.
-    #[serde(default, rename = "kind", skip_serializing_if = "str::is_empty")]
-    pub fault: String,
+    #[serde(default, skip_serializing_if = "str::is_empty")]
+    pub kind: String,
     #[serde(default, skip_serializing_if = "str::is_empty")]
     pub error: String,
-    #[serde(default = "clock::now")]
+    #[serde(default)]
     pub at: String,
     /// Monotonic position in one session's complete durable event log.
     #[serde(default = "unplaced", skip_serializing_if = "is_unplaced")]
@@ -147,10 +147,22 @@ fn is_unplaced(seq: &i64) -> bool {
 }
 
 impl Event {
-    pub fn new(kind: &str) -> Self {
+    pub const START: &'static str = event_type::START;
+    pub const TEXT: &'static str = event_type::TEXT;
+    pub const THINKING: &'static str = event_type::THINKING;
+    pub const TOOL_CALL: &'static str = event_type::TOOL_CALL;
+    pub const TOOL_RESULT: &'static str = event_type::TOOL_RESULT;
+    pub const END: &'static str = event_type::END;
+    pub const INJECTED: &'static str = event_type::INJECTED;
+    pub const ERROR: &'static str = event_type::ERROR;
+    pub const SWITCH_PROVIDER: &'static str = event_type::SWITCH_PROVIDER;
+    pub const NEW_SESSION: &'static str = event_type::NEW_SESSION;
+    pub const CONFIG: &'static str = event_type::CONFIG;
+
+    pub fn new(event_type: &str) -> Self {
         Event {
             v: SCHEMA_VERSION,
-            kind: kind.into(),
+            event_type: event_type.into(),
             session: String::new(),
             provider: String::new(),
             model: String::new(),
@@ -160,7 +172,7 @@ impl Event {
             args: Map::new(),
             result: Value::Null,
             ok: true,
-            fault: String::new(),
+            kind: String::new(),
             error: String::new(),
             at: clock::now(),
             seq: -1,
@@ -170,13 +182,13 @@ impl Event {
         }
     }
 
-    /// A failure, in omni's vocabulary. `fault` says which sort.
-    pub fn failure(fault: &str, error: impl Into<String>) -> Self {
+    /// A failure, in omni's vocabulary. `kind` says which sort.
+    pub fn failure(kind: &str, error: impl Into<String>) -> Self {
         Event {
             ok: false,
-            fault: fault.into(),
+            kind: kind.into(),
             error: error.into(),
-            ..Event::new(kind::ERROR)
+            ..Event::new(Event::ERROR)
         }
     }
 
@@ -184,7 +196,7 @@ impl Event {
     pub fn config(what: &str) -> Self {
         Event {
             text: what.into(),
-            ..Event::new(kind::CONFIG)
+            ..Event::new(Event::CONFIG)
         }
     }
 
@@ -214,13 +226,13 @@ impl Event {
         self
     }
 
-    pub fn is(&self, kind: &str) -> bool {
-        self.kind == kind
+    pub fn is(&self, event_type: &str) -> bool {
+        self.event_type == event_type
     }
 
     /// Does this carry conversation, i.e. would a provider need to be told it?
     pub fn is_history(&self) -> bool {
-        HISTORY_TYPES.contains(&self.kind.as_str())
+        HISTORY_TYPES.contains(&self.event_type.as_str())
     }
 
     pub fn to_value(&self) -> Value {
@@ -293,7 +305,7 @@ mod tests {
 
     #[test]
     fn defaults_are_left_out_of_the_session_file() {
-        let written = Event::new(kind::THINKING).to_value();
+        let written = Event::new(Event::THINKING).to_value();
         let keys: Vec<&str> = written
             .as_object()
             .unwrap()
@@ -305,7 +317,7 @@ mod tests {
 
     #[test]
     fn ok_is_written_only_when_it_is_false() {
-        assert!(Event::new(kind::TEXT).to_value().get("ok").is_none());
+        assert!(Event::new(Event::TEXT).to_value().get("ok").is_none());
         assert_eq!(Event::failure(CRASH, "boom").to_value()["ok"], false);
     }
 
@@ -316,7 +328,7 @@ mod tests {
             .about("some-model")
             .with("left", 2);
         let back: Event = serde_json::from_value(event.to_value()).unwrap();
-        assert_eq!(back.fault, AUTH);
+        assert_eq!(back.kind, AUTH);
         assert_eq!(back.provider, "claude");
         assert_eq!(back.model, "some-model");
         assert_eq!(back.extra["left"], 2);
@@ -326,10 +338,10 @@ mod tests {
 
     #[test]
     fn an_unknown_field_does_not_break_a_reader() {
-        let mut raw = Event::new(kind::TEXT).to_value();
+        let mut raw = Event::new(Event::TEXT).to_value();
         raw["something_from_the_future"] = serde_json::json!(1);
         let back: Event = serde_json::from_value(raw).unwrap();
-        assert!(back.is(kind::TEXT));
+        assert!(back.is(Event::TEXT));
     }
 
     #[test]
@@ -340,6 +352,18 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(back.v, SCHEMA_VERSION);
+        assert_eq!(back.at, "", "missing timestamps deserialize like Python");
+    }
+
+    #[test]
+    fn type_and_error_kind_have_the_same_names_as_python_and_json() {
+        let event = Event::failure(AUTH, "log in");
+        assert_eq!(event.event_type, Event::ERROR);
+        assert_eq!(event.kind, AUTH);
+        let wire = event.to_value();
+        assert_eq!(wire["type"], Event::ERROR);
+        assert_eq!(wire["kind"], AUTH);
+        assert!(wire.get("event_type").is_none());
     }
 
     #[test]
@@ -355,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn fragments_inside_unrelated_words_are_not_fault_signals() {
+    fn fragments_inside_unrelated_words_are_not_error_kind_signals() {
         assert_eq!(classify("failed to generate a response"), CRASH);
         assert_eq!(classify("authoring instructions failed"), CRASH);
         assert_eq!(classify("the model has unlimited context"), CRASH);
@@ -363,9 +387,9 @@ mod tests {
 
     #[test]
     fn only_conversation_counts_as_history() {
-        assert!(Event::new(kind::TEXT).is_history());
-        assert!(Event::new(kind::TOOL_CALL).is_history());
-        assert!(!Event::new(kind::END).is_history());
+        assert!(Event::new(Event::TEXT).is_history());
+        assert!(Event::new(Event::TOOL_CALL).is_history());
+        assert!(!Event::new(Event::END).is_history());
         assert!(!Event::config("launch").is_history());
     }
 }

@@ -201,6 +201,13 @@ impl Meta {
         self.ensure_writable()?;
         let mut next = self.data.clone();
         change(&mut next);
+        // Setters, provider binds, and watermark updates are deliberately
+        // idempotent. A no-op must not pay for an atomic file replacement (or
+        // move `updated`) merely because a caller repeated what is already
+        // durable.
+        if next == self.data {
+            return Ok(());
+        }
         next.insert("updated".into(), json!(clock::now()));
         self.write(&next)?;
         self.data = next;
@@ -469,6 +476,21 @@ mod tests {
         .unwrap();
         assert_eq!(meta.setting_str("cwd").as_deref(), Some("/kept"));
         assert_eq!(meta.setting("level"), Some(&json!(7)));
+    }
+
+    #[test]
+    fn repeating_durable_state_does_not_replace_the_metadata_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let _home = scratch_home("meta-idempotent");
+        let mut meta = Meta::open("s");
+        meta.set_setting("level", json!(4)).unwrap();
+        let inode = fs::metadata(&meta.path).unwrap().ino();
+
+        meta.set_setting("level", json!(4)).unwrap();
+
+        assert_eq!(fs::metadata(&meta.path).unwrap().ino(), inode);
+        assert_eq!(meta.setting("level"), Some(&json!(4)));
     }
 
     #[test]

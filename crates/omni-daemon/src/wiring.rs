@@ -238,7 +238,7 @@ mod tests {
         Snapshot {
             session: "s".into(),
             status: omni_core::chat::STOPPED.into(),
-            level: 5,
+            intelligence: 5,
             providers: Vec::new(),
             provider: String::new(),
             model: String::new(),

@@ -31,7 +31,7 @@ def settle(chat, timeout=400):
     return False
 
 
-def talk(session_id, providers, level=CHEAPEST):
+def talk(session_id, providers, intelligence=CHEAPEST):
     """A live chat in the real omni home, working in a directory of its own.
 
     The directory is stable across runs on purpose: claude resumes by working
@@ -46,7 +46,7 @@ def talk(session_id, providers, level=CHEAPEST):
     chat = Inference.load_or_create_session(session_id, providers)
     chat.from_here = max((event.seq for event in chat.history()), default=-1) + 1
     chat.cwd(str(paths.ensure(paths.home() / "cwd" / session_id)))
-    chat.intelligence(level)
+    chat.intelligence(intelligence)
     chat.disable_subagents()
     chat.disable_mcp()
     return chat

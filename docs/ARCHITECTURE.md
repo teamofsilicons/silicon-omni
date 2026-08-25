@@ -7,7 +7,7 @@ socket protocol.
 
 ```text
 Python client ─┐
-omni CLI ──────┼── NDJSON over a Unix socket ── omnid
+silicon-omni/so CLI ─┼── NDJSON over a Unix socket ── omnid
 Rust client ───┘                               ├─ session conductors
                                               ├─ event logs and metadata
                                               └─ Claude / Codex / agy processes
@@ -45,13 +45,18 @@ Each open Python `Chat` uses its own connection because the connection is the
 subscription. A separate shared connection handles one-off questions such as provider
 availability, account status, quota, and the intelligence dial.
 
+Public clients call the replay cursor `since`. The version-1 wire still encodes it as
+`from` so 0.4 clients remain compatible; that transport spelling does not leak back out
+through the Python, Rust, or terminal APIs.
+
 ## Many clients, one session
 
 The daemon registry holds at most one conductor for a session id. Several connections
 may attach to it, every listener receives the same event stream, and any connection may
 send or change settings.
 
-An attach includes `from`, the first event sequence number the client wants. The
+The version-1 `open` request includes `from`, the first Event sequence number the client
+wants; public clients call that cursor `since`. The
 registry holds the listener lock while it replays the on-disk log and subscribes the
 connection, so a live event cannot slip into the seam. A negative value means “start
 after the latest event.” Replay is not truncated, but each connection has a finite
@@ -92,6 +97,20 @@ auth-failover policy, and CWD therefore survive cold reaping and daemon restarts
 `~/.omni/sessions/{id}.jsonl`. The session file is the event log; there is no private
 history format to reconcile with it. `HISTORY_TYPES` marks the conversational subset a
 provider needs when it arrives late.
+
+The public vocabulary is intentionally narrower than the transport vocabulary.
+`Inference` is the front door, `Chat` is a client handle, and a session id is the
+durable conversation identity. The setting is `intelligence`; the version-1 wire and
+metadata keep encoding it as `level` for compatibility, and every client normalizes it
+at the public boundary. A finite persisted query is
+`history`; live delivery is Events, and `logs` observes the complete live daemon stream.
+`start`, `send`, `detach`, `stop`, and `refresh` carry the same lifecycle meaning in
+Python, Rust, and the CLI. [`TERMINOLOGY.md`](TERMINOLOGY.md) is the public contract.
+
+An Event's JSON discriminator is `type`. Python therefore exposes `event.type`; Rust
+exposes `event.event_type` because `type` is reserved and renames it to `type` during
+serialization. `kind` is reserved for the classification on an error Event. It must
+never be used as a second name for the Event discriminator.
 
 `v` selects the on-disk schema (`1` today, also the default for pre-versioned records),
 `seq` orders the complete session log, and `turn` groups activity beginning with turn
@@ -203,7 +222,7 @@ Failure behavior is part of the architecture, not cleanup after the happy path:
   `busy`.
 - A crash or lost login closes an open turn with a synthetic `END`.
 - By default a provider that loses authentication is removed and the same intelligence
-  level is resolved over those remaining.
+  value is resolved over those remaining.
 - A dead runner is stopped before its reference is discarded, so no CLI is orphaned.
 - Process stop has a bounded pipe-reader handoff and closes its callback gate before it
   returns. A small death-pipe guardian owns each provider and probe process group, so an
@@ -242,11 +261,12 @@ than guessing.
 
 ## Distribution
 
-The platform Python wheel contains both Rust executables: `omnid` and the native `omni`
-terminal client. Its Python console-script entry point only replaces itself with that
-bundled `omni`, preserving arguments and environment. The same binaries remain
+The platform Python wheel contains three Rust executables: `omnid` plus the native
+`silicon-omni` and `so` terminal aliases. Each Python console-script entry point only
+replaces itself with its corresponding bundled executable, preserving arguments and
+environment. The same binaries remain
 independently installable as the `omni-daemon` and `silicon-omni-cli` Cargo packages; Rust
-programs use `omni-client` directly.
+programs use `silicon-omni` directly.
 
 ## Repository map
 
@@ -266,7 +286,8 @@ crates/omni-daemon/
 crates/omni-client/
   lib.rs              synchronous calls, reply multiplexing, and frame subscriptions
 crates/omni-cli/
-  main.rs             daemon/session/account commands and streaming terminal chat
+  lib.rs              daemon/session/account commands and streaming terminal chat
+  bin/                silicon-omni and so executable entry points
 omni/
   client/             daemon discovery/startup and Python socket transport
   chat.py             callbacks and Python session handle

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use omni_core::chat::{Change, Chat, Handle, Snapshot, Wake};
-use omni_core::events::{Event, kind};
+use omni_core::events::{Event, event_type};
 use omni_core::providers::test as double;
 use omni_core::testing::{Home, scratch_home};
 
@@ -161,13 +161,16 @@ impl Session {
     }
 
     pub fn kinds(&self) -> Vec<String> {
-        self.log().into_iter().map(|event| event.kind).collect()
+        self.log()
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect()
     }
 
     pub fn said(&self) -> Vec<String> {
         self.log()
             .into_iter()
-            .filter(|event| event.is(kind::TEXT))
+            .filter(|event| event.is(event_type::TEXT))
             .map(|event| event.text)
             .collect()
     }
@@ -176,7 +179,7 @@ impl Session {
     pub fn notices(&self, what: &str) -> Vec<Event> {
         self.log()
             .into_iter()
-            .filter(|event| event.is(kind::CONFIG) && event.text == what)
+            .filter(|event| event.is(event_type::CONFIG) && event.text == what)
             .collect()
     }
 

@@ -14,7 +14,7 @@ def test_the_wire_strings_are_pinned():
         name: getattr(Event, name)
         for name in (
             "START", "TEXT", "THINKING", "END", "INJECTED", "ERROR",
-            "SWITCH_PROVIDER", "NEW_SESSION", "CONFIG", "SEED",
+            "SWITCH_PROVIDER", "NEW_SESSION", "CONFIG",
         )
     } == {
         "START": "start",
@@ -26,9 +26,9 @@ def test_the_wire_strings_are_pinned():
         "SWITCH_PROVIDER": "switch_provider",
         "NEW_SESSION": "new_session",
         "CONFIG": "config",
-        "SEED": "seed",
     }
     assert Event.TOOL.CALL == "tool.call" and Event.TOOL.RESULT == "tool.result"
+    assert not hasattr(Event, "SEED"), "provider-internal seed records are not public events"
 
 
 def test_the_failure_kinds_are_pinned():
@@ -54,6 +54,13 @@ def test_a_file_written_by_a_newer_omni_still_loads():
 
 def test_a_pre_versioned_file_defaults_to_schema_one():
     assert Event.from_dict({"type": "text", "text": "old"}).v == 1
+
+
+def test_old_event_extras_use_the_public_intelligence_spelling():
+    event = Event.from_dict(
+        {"type": "config", "text": "intelligence", "extra": {"level": 7}}
+    )
+    assert event.extra == {"intelligence": 7}
 
 
 def test_the_daemon_and_python_describe_an_event_the_same_way(one):

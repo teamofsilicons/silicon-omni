@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use serde_json::{Value, json};
 
-use crate::events::{Event, classify, kind};
+use crate::events::{Event, classify, event_type};
 use crate::providers::base;
 
 const THINKING_BLOCKS: &[&str] = &["thinking", "redacted_thinking"];
@@ -134,10 +134,10 @@ impl Stream {
             let text = block.get("text").and_then(Value::as_str).unwrap_or("");
             if block_kind == "text" {
                 if !text.is_empty() {
-                    events.push(self.event(kind::TEXT).saying(text));
+                    events.push(self.event(event_type::TEXT).saying(text));
                 }
             } else if THINKING_BLOCKS.contains(&block_kind) {
-                events.push(self.event(kind::THINKING));
+                events.push(self.event(event_type::THINKING));
             } else if block_kind == "tool_use" {
                 let id = block
                     .get("id")
@@ -150,7 +150,7 @@ impl Stream {
                     .unwrap_or("")
                     .to_string();
                 self.tools.insert(id.clone(), name.clone());
-                let mut event = self.event(kind::TOOL_CALL);
+                let mut event = self.event(event_type::TOOL_CALL);
                 event.tool = name;
                 event.id = id;
                 event.args = block["input"].as_object().cloned().unwrap_or_default();
@@ -165,7 +165,7 @@ impl Stream {
                 // Event.text. Known encrypted thinking stays excluded above.
                 let text = flatten_content(Some(block));
                 if !text.is_empty() {
-                    events.push(self.event(kind::TEXT).saying(text));
+                    events.push(self.event(event_type::TEXT).saying(text));
                 }
             }
         }
@@ -187,9 +187,9 @@ impl Stream {
         }
         self.expected.pop_front();
         let opening = if self.turn_open {
-            kind::INJECTED
+            event_type::INJECTED
         } else {
-            kind::START
+            event_type::START
         };
         self.turn_open = true;
         let mut event = base::confirmed(&text, opening)
@@ -223,7 +223,7 @@ impl Stream {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let mut event = self.event(kind::TOOL_RESULT);
+            let mut event = self.event(event_type::TOOL_RESULT);
             event.tool = self.tools.remove(&call_id).unwrap_or_default();
             event.id = call_id;
             if !event.id.is_empty() {
@@ -282,7 +282,7 @@ impl Stream {
             );
         }
         events.push(
-            self.event(kind::END)
+            self.event(event_type::END)
                 .with(
                     "stop_reason",
                     data.get("stop_reason").cloned().unwrap_or(Value::Null),
@@ -403,7 +403,7 @@ mod tests {
             }),
         );
         assert_eq!(events.len(), 1);
-        assert!(events[0].is(kind::THINKING));
+        assert!(events[0].is(event_type::THINKING));
         assert!(events[0].text.is_empty(), "the content never leaves claude");
     }
 
@@ -422,8 +422,8 @@ mod tests {
             }),
         );
         assert_eq!(events.len(), 1);
-        assert!(events[0].is(kind::ERROR));
-        assert_eq!(events[0].fault, crate::events::AUTH);
+        assert!(events[0].is(event_type::ERROR));
+        assert_eq!(events[0].kind, crate::events::AUTH);
         assert_eq!(events[0].error, "API Error: 401 unauthorized");
         assert!(events[0].text.is_empty());
     }
@@ -447,8 +447,8 @@ mod tests {
             }),
         );
         assert_eq!(events.len(), 1);
-        assert!(events[0].is(kind::ERROR));
-        assert_eq!(events[0].fault, crate::events::UNAVAILABLE);
+        assert!(events[0].is(event_type::ERROR));
+        assert_eq!(events[0].kind, crate::events::UNAVAILABLE);
         assert!(events[0].text.is_empty());
     }
 
@@ -506,7 +506,7 @@ mod tests {
         );
         assert_eq!(first.len(), 1);
         assert!(first[0].is(base::CONFIRMED));
-        assert_eq!(first[0].extra[base::CONFIRMED_AS], kind::START);
+        assert_eq!(first[0].extra[base::CONFIRMED_AS], event_type::START);
         assert_eq!(first[0].native["session_id"], "s1");
         assert_eq!(first[0].native["uuid"], "u1");
 
@@ -518,7 +518,7 @@ mod tests {
                 "message": {"content": "two"}
             }),
         );
-        assert_eq!(injected[0].extra[base::CONFIRMED_AS], kind::INJECTED);
+        assert_eq!(injected[0].extra[base::CONFIRMED_AS], event_type::INJECTED);
 
         feed(
             &mut stream,
@@ -532,7 +532,7 @@ mod tests {
                 "message": {"content": "three"}
             }),
         );
-        assert_eq!(next[0].extra[base::CONFIRMED_AS], kind::START);
+        assert_eq!(next[0].extra[base::CONFIRMED_AS], event_type::START);
     }
 
     #[test]
@@ -547,7 +547,7 @@ mod tests {
             )
             .is_empty()
         );
-        for opening in [kind::START, kind::INJECTED] {
+        for opening in [event_type::START, event_type::INJECTED] {
             let events = feed(
                 &mut stream,
                 json!({"type": "user", "isReplay": true, "message": {"content": "same"}}),
@@ -588,8 +588,8 @@ mod tests {
             }),
         );
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].fault, crate::events::AUTH);
-        assert!(events[1].is(kind::END));
+        assert_eq!(events[0].kind, crate::events::AUTH);
+        assert!(events[1].is(event_type::END));
     }
 
     #[test]
@@ -611,7 +611,7 @@ mod tests {
                 "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"}
             }),
         );
-        assert_eq!(events[0].fault, crate::events::LIMIT);
+        assert_eq!(events[0].kind, crate::events::LIMIT);
     }
 
     #[test]
@@ -656,7 +656,7 @@ mod tests {
         );
 
         assert_eq!(events.len(), 1);
-        assert!(events[0].is(kind::TEXT));
+        assert!(events[0].is(event_type::TEXT));
         assert_eq!(
             serde_json::from_str::<Value>(&events[0].text).unwrap(),
             block
