@@ -66,6 +66,10 @@ pub struct Config {
     pub model: String,
     #[serde(default)]
     pub effort: String,
+    /// Ask the CLI for its faster tier. Not every one has such a thing, and a
+    /// provider that does not simply ignores it.
+    #[serde(default)]
+    pub fast: bool,
     #[serde(default)]
     pub system_prompt: String,
     #[serde(default)]
@@ -90,6 +94,7 @@ impl Default for Config {
         Config {
             model: String::new(),
             effort: String::new(),
+            fast: false,
             system_prompt: String::new(),
             append_system_prompt: String::new(),
             disable_subagents: true,

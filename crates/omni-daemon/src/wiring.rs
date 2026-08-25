@@ -228,6 +228,7 @@ impl Listener {
 
 #[cfg(test)]
 mod tests {
+    use omni_core::choose::Ask;
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixStream;
     use std::sync::mpsc::Receiver;
@@ -238,7 +239,7 @@ mod tests {
         Snapshot {
             session: "s".into(),
             status: omni_core::chat::STOPPED.into(),
-            intelligence: 5,
+            ask: Ask::intelligence(5),
             providers: Vec::new(),
             provider: String::new(),
             model: String::new(),

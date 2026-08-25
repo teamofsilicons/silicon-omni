@@ -3,7 +3,7 @@
     from omni import Inference, Event
 
     chat = Inference.load_or_create_session("my-session")
-    chat.intelligence(7)
+    chat.model("code")
 
     @chat.on_event
     def handle(event):
@@ -20,7 +20,7 @@ first time anything needs it, so there is nothing to set up.
 from .chat import Chat
 from .client import DaemonError
 from .events import Event
-from .inference import Inference, NoDial
+from .inference import Inference, NoAnswer
 
 __version__ = "0.5.0"
 
@@ -35,4 +35,4 @@ class SessionBusy(RuntimeError):
     """
 
 
-__all__ = ["Inference", "Event", "Chat", "DaemonError", "SessionBusy", "NoDial"]
+__all__ = ["Inference", "Event", "Chat", "DaemonError", "SessionBusy", "NoAnswer"]

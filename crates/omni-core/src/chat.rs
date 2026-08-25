@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::events::{AUTH, CRASH, Event, event_type};
-use crate::intelligence::{Rung, resolve};
+use crate::choose::{Ask, Pick, resolve};
 use crate::providers;
 use crate::providers::base::{CONFIRMED, CONFIRMED_AS, Config, Delivery, Emit, GENERATION, Runner};
 use crate::session::{Meta, PendingMessage, Store};
@@ -41,7 +41,7 @@ const MODEL_EVENTS: &[&str] = &[
 
 const ACTIVE_PROVIDERS: &str = "active_providers";
 /// The 0.4 metadata spelling retained on disk for cold-session compatibility.
-const STORED_INTELLIGENCE: &str = "level";
+const STORED_ASK: &str = "ask";
 const SYSTEM_PROMPT: &str = "system_prompt";
 const APPEND_SYSTEM_PROMPT: &str = "append_system_prompt";
 const SUBAGENTS: &str = "subagents";
@@ -68,7 +68,7 @@ const ONCE: &[&str] = &["unsupported", "approximated"];
 #[derive(Debug, Clone)]
 pub enum Change {
     Providers(Vec<String>),
-    Intelligence(i64),
+    Model(Ask),
     SystemPrompt(String),
     AppendSystemPrompt(String),
     Subagents(bool),
@@ -102,10 +102,8 @@ pub enum Wake {
 pub struct Snapshot {
     pub session: String,
     pub status: String,
-    /// The cross-provider 0-10 intelligence setting. The transport retains
-    /// the legacy `level` key so 0.4 clients can still read daemon snapshots.
-    #[serde(rename = "level", alias = "intelligence")]
-    pub intelligence: i64,
+    /// What this chat was told to run: a key, a number, or a model by name.
+    pub ask: Ask,
     pub providers: Vec<String>,
     /// The provider currently up, if any.
     pub provider: String,
@@ -225,7 +223,7 @@ pub struct Chat {
     store: Store,
     meta: Meta,
     providers: Vec<String>,
-    intelligence: i64,
+    ask: Ask,
     config: Config,
     sink: Emit,
     inbox: Receiver<Wake>,
@@ -316,11 +314,16 @@ impl Chat {
                 .err()
                 .map(|error| format!("reconciling delivered messages: {error}"));
         }
-        let intelligence = meta
-            .setting(STORED_INTELLIGENCE)
-            .or_else(|| meta.get(STORED_INTELLIGENCE))
-            .and_then(|value| value.as_i64())
-            .unwrap_or(5);
+        /* What this session was last told to run. A number on its own is a
+           0.5 session being reopened, and still means the dial. */
+        let ask = meta
+            .setting(STORED_ASK)
+            .or_else(|| meta.get(STORED_ASK))
+            .and_then(|value| match value.as_i64() {
+                Some(number) => Some(Ask::intelligence(number)),
+                None => serde_json::from_value::<Ask>(value.clone()).ok(),
+            })
+            .unwrap_or_default();
         let providers = meta
             .setting(ACTIVE_PROVIDERS)
             .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
@@ -357,7 +360,7 @@ impl Chat {
             .unwrap_or(true);
         let mut initial_settings = serde_json::Map::new();
         initial_settings.insert(ACTIVE_PROVIDERS.into(), json!(providers));
-        initial_settings.insert(STORED_INTELLIGENCE.into(), json!(intelligence));
+        initial_settings.insert(STORED_ASK.into(), json!(ask));
         initial_settings.insert(SYSTEM_PROMPT.into(), json!(config.system_prompt));
         initial_settings.insert(
             APPEND_SYSTEM_PROMPT.into(),
@@ -379,7 +382,7 @@ impl Chat {
         let state = Arc::new(RwLock::new(Snapshot {
             session: session_id.to_string(),
             status: IDLE.into(),
-            intelligence,
+            ask: ask.clone(),
             providers: providers.clone(),
             provider: String::new(),
             model: String::new(),
@@ -399,7 +402,7 @@ impl Chat {
             store,
             meta,
             providers,
-            intelligence,
+            ask,
             config,
             sink,
             inbox,
@@ -534,14 +537,10 @@ impl Chat {
                 self.providers = providers;
                 ("providers", json!({"providers": self.providers}))
             }
-            Change::Intelligence(intelligence) => {
-                self.save_setting(
-                    STORED_INTELLIGENCE,
-                    json!(intelligence),
-                    "saving intelligence metadata",
-                )?;
-                self.intelligence = intelligence;
-                ("intelligence", json!({"intelligence": intelligence}))
+            Change::Model(ask) => {
+                self.save_setting(STORED_ASK, json!(ask), "saving model metadata")?;
+                self.ask = ask.clone();
+                ("model", json!({"ask": ask}))
             }
             Change::SystemPrompt(text) => {
                 self.save_setting(SYSTEM_PROMPT, json!(text), "saving system-prompt metadata")?;
@@ -1091,11 +1090,11 @@ impl Chat {
 
     // ---------------------------------------------------------------- runners
 
-    fn rung(&self) -> Result<Rung, String> {
-        resolve(self.intelligence, &self.providers).map_err(|err| err.to_string())
+    fn rung(&self) -> Result<Pick, String> {
+        resolve(&self.ask, &self.providers).map_err(|err| err.to_string())
     }
 
-    fn signature(&self, rung: &Rung) -> Signature {
+    fn signature(&self, rung: &Pick) -> Signature {
         (
             rung.provider.clone(),
             rung.model.clone(),
@@ -1121,7 +1120,7 @@ impl Chat {
     }
 
     /// Is this only a model or effort change on the provider already running?
-    fn tunable(&self, rung: &Rung) -> bool {
+    fn tunable(&self, rung: &Pick) -> bool {
         let Some((provider, model, effort, config)) = &self.current else {
             return false;
         };
@@ -1148,7 +1147,7 @@ impl Chat {
                             .from(&rung.provider)
                             .about(&rung.model)
                             .with("effort", rung.effort.clone())
-                            .with("intelligence", rung.intelligence),
+                            .with("fast", rung.fast),
                     )
                     .is_none()
                 {
@@ -1184,7 +1183,7 @@ impl Chat {
                             .about(&rung.model)
                             .with("from", previous)
                             .with("to", rung.provider.clone())
-                            .with("intelligence", rung.intelligence),
+                            .with("fast", rung.fast),
                     )
                     .is_none()
             {
@@ -1251,7 +1250,7 @@ impl Chat {
         None
     }
 
-    fn launch(&mut self, rung: &Rung) -> Result<(), String> {
+    fn launch(&mut self, rung: &Pick) -> Result<(), String> {
         let (native_id, synced) = self.meta.native(&rung.provider);
         let wanted = self.signature(rung);
 
@@ -1270,6 +1269,7 @@ impl Chat {
         let config = Config {
             model: rung.model.clone(),
             effort: rung.effort.clone(),
+            fast: rung.fast,
             ..self.config.clone()
         };
         let (mut runner, mut epoch) = self.bring_up(rung, &config, &native_id, synced + 1)?;
@@ -1316,7 +1316,7 @@ impl Chat {
         &mut self,
         runner: Box<dyn Runner>,
         epoch: Option<u64>,
-        rung: &Rung,
+        rung: &Pick,
         fresh: bool,
     ) -> Result<(), String> {
         let native = runner.native_id();
@@ -1342,7 +1342,7 @@ impl Chat {
                     .from(&rung.provider)
                     .about(&rung.model)
                     .with("effort", rung.effort.clone())
-                    .with("intelligence", rung.intelligence)
+                    .with("fast", rung.fast)
                     .with("native", native.clone()),
             )
             .is_none()
@@ -1367,7 +1367,7 @@ impl Chat {
 
     fn bring_up(
         &mut self,
-        rung: &Rung,
+        rung: &Pick,
         config: &Config,
         native_id: &str,
         since: i64,
@@ -1619,7 +1619,7 @@ impl Chat {
             .map(|r| r.name().to_string())
             .unwrap_or_default();
         self.settle(|state| {
-            state.intelligence = self.intelligence;
+            state.ask = self.ask.clone();
             state.providers = self.providers.clone();
             state.cwd = self.config.cwd.clone();
             state.provider = if running.is_empty() {
@@ -2091,7 +2091,7 @@ mod tests {
         original
             .apply(Change::Providers(vec!["beta".into()]))
             .unwrap();
-        original.apply(Change::Intelligence(9)).unwrap();
+        original.apply(Change::Model(Ask::intelligence(9))).unwrap();
         original
             .apply(Change::SystemPrompt("replace everything".into()))
             .unwrap();
@@ -2111,7 +2111,7 @@ mod tests {
         );
         let state = restored_handle.snapshot();
         assert_eq!(state.providers, ["beta"]);
-        assert_eq!(state.intelligence, 9);
+        assert_eq!(state.ask, Ask::intelligence(9));
         assert_eq!(state.cwd, first_dir, "the later opener cannot move it");
         assert_eq!(restored.config.system_prompt, "replace everything");
         assert_eq!(restored.config.append_system_prompt, "and append this");

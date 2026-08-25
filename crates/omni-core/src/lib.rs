@@ -1,7 +1,7 @@
 //! silicon omni — one engine for Claude Code, Codex and Antigravity.
 //!
 //! This crate is the whole of omni's behaviour: the event vocabulary, the
-//! session log, the provider adapters, the 0-10 intelligence dial, and the
+//! session log, the provider adapters, what should answer a turn, and the
 //! conductor that ties them together. It knows nothing about sockets or
 //! clients — `omni-daemon` wraps it in one, and every language binding talks
 //! to that.
@@ -12,7 +12,7 @@
 
 pub mod chat;
 pub mod events;
-pub mod intelligence;
+pub mod choose;
 pub mod providers;
 pub mod session;
 pub mod shared;

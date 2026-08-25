@@ -59,17 +59,27 @@ fn items(turns: &[Turn]) -> Value {
 ///
 /// Project docs go regardless. Subagents are the only part you can ask for
 /// back, and asking must not quietly bring the memories with them.
+///
+/// Running hot belongs here rather than in the turn: `service_tier` is read
+/// from the Codex config, and a flag set is what a shared app-server is keyed
+/// on — so a fast chat rents its own warm server and a normal one is untouched
+/// by it. Putting it in `turn/start` would have meant guessing at a schema.
 pub fn flags(config: &Config) -> Vec<String> {
     let subagents = if config.disable_subagents {
         NO_SUBAGENTS
     } else {
         &[]
     };
-    subagents
+    let mut out: Vec<String> = subagents
         .iter()
         .chain(NO_MEMORIES)
         .map(|part| part.to_string())
-        .collect()
+        .collect();
+    if config.fast {
+        out.push("-c".into());
+        out.push("service_tier=\"fast\"".into());
+    }
+    out
 }
 
 pub struct Runner {
@@ -302,6 +312,18 @@ mod tests {
                 "{set:?}"
             );
         }
+    }
+
+    #[test]
+    fn running_hot_is_a_launch_flag_so_it_gets_its_own_server() {
+        let normal = flags(&Config::default());
+        let hot = flags(&Config {
+            fast: true,
+            ..Config::default()
+        });
+        assert!(!normal.iter().any(|f| f.contains("service_tier")));
+        assert!(hot.iter().any(|f| f == "service_tier=\"fast\""));
+        assert_ne!(normal, hot, "a hot chat must not share a warm server");
     }
 
     #[test]

@@ -31,16 +31,14 @@ STOPPED = "stopped"
 
 
 def _normalize_snapshot(snapshot: dict) -> dict:
-    """Return the public Python spelling of a daemon session snapshot.
+    """The public Python spelling of a daemon session snapshot.
 
-    Daemons before 0.5 called the user-facing intelligence setting ``level``.
-    Keep accepting that wire spelling so a newly upgraded Python client can
-    still talk to an already-running daemon, but never leak it through the
-    public Python state.
+    0.7 replaced the single ``level`` setting with an ``ask``, which is a key,
+    a number, or a model by name. A daemon old enough to send ``level`` is one
+    this client cannot talk to anyway, so the old key is dropped rather than
+    translated into a shape it does not fit.
     """
     normalized = dict(snapshot)
-    if "intelligence" not in normalized and "level" in normalized:
-        normalized["intelligence"] = normalized["level"]
     normalized.pop("level", None)
     return normalized
 
@@ -129,18 +127,57 @@ class Chat:
         self.providers = list(providers)
         self.change("providers", self.providers)
 
-    def intelligence(self, value: int) -> None:
-        """0-10 across every active provider. May change model *and* provider."""
-        self.change("intelligence", int(value))
+    def model(
+        self,
+        key: str | None = None,
+        *,
+        intelligence: int | None = None,
+        bench: str | None = None,
+        model: str | None = None,
+        effort: str = "",
+        fast: bool = False,
+        provider: str | None = None,
+    ) -> None:
+        """Say what should answer. May change model, effort *and* provider.
 
-    def inteligence(self, value: int) -> None:
-        """Deprecated misspelling of :meth:`intelligence`."""
-        warnings.warn(
-            "Chat.inteligence() is deprecated; use Chat.intelligence()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.intelligence(value)
+        Three ways, and exactly one of them per call:
+
+        ``chat.model("code")``
+            A shortlist somebody curated. The first vendor on it you are
+            signed into answers, so losing one walks you a place down the list.
+
+        ``chat.model(intelligence=7)``
+            The 0-10 dial: the left edge of a board, where a model earns a rung
+            when nothing else is both better *and* cheaper. ``bench`` picks the
+            board.
+
+        ``chat.model(model="gemini-3.7-flash-low", provider="google")``
+            You already know. The name goes to the CLI verbatim, so a model
+            released this morning works without omni knowing about it.
+            ``fast`` asks for the CLI's faster tier where it has one, and is
+            ignored where it does not.
+        """
+        said = [name for name, given in
+                (("key", key is not None),
+                 ("intelligence", intelligence is not None),
+                 ("model", model is not None)) if given]
+        if len(said) != 1:
+            raise ValueError(
+                "say exactly one of key, intelligence or model"
+                + (f"; got {', '.join(said)}" if said else "")
+            )
+
+        if key is not None:
+            ask: dict[str, object] = {"how": "key", "key": str(key).strip().lower()}
+        elif intelligence is not None:
+            ask = {"how": "intelligence", "value": int(intelligence)}
+            if bench:
+                ask["bench"] = str(bench).strip()
+        else:
+            ask = {"how": "model", "model": str(model).strip(), "effort": effort, "fast": bool(fast)}
+            if provider:
+                ask["provider"] = str(provider).strip()
+        self.change("model", ask)
 
     def system_prompt(self, text: str) -> None:
         """Replace the provider's own session prompt."""
@@ -183,7 +220,7 @@ class Chat:
         """Stop dropping a provider that loses its login mid-run.
 
         On by default: an unauthenticated CLI cannot finish the turn, so omni
-        takes it off this chat's list and resolves the same intelligence level
+        takes it off this chat's list and resolves the same ask
         again over whoever is left. Turn it off and the auth error is reported
         and the turn simply ends.
         """
@@ -276,7 +313,12 @@ class Chat:
         return self.state.get("provider", "")
 
     @property
-    def model(self) -> str:
+    def running_model(self) -> str:
+        """The model actually up right now.
+
+        Not always what was asked for: a key resolves to different models as
+        providers come and go. :meth:`model` is the setter.
+        """
         return self.state.get("model", "")
 
     @property
@@ -285,19 +327,19 @@ class Chat:
         return self.state.get("effort", "")
 
     @property
-    def current_intelligence(self) -> int | None:
-        """The active 0-10 intelligence setting, once the daemon has reported it.
+    def current_ask(self) -> dict | None:
+        """What this chat was last told to run, once the daemon has reported it.
 
-        This is deliberately separate from :meth:`intelligence`, which asks
+        This is deliberately separate from :meth:`model`, which asks
         for a future setting change and remains callable.
         """
-        value = self.state.get("intelligence")
-        return int(value) if value is not None else None
+        ask = self.state.get("ask")
+        return dict(ask) if isinstance(ask, dict) else None
 
     def start(self, since: int = 0) -> "Chat":
         """Open the session and start hearing about it.
 
-        Everything asked for before this — providers, intelligence, prompts —
+        Everything asked for before this — providers, the model, prompts —
         is applied here, in the order it was asked for.
 
         ``since`` is the first ``event.seq`` to replay. The default is the whole

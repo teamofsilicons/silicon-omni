@@ -28,7 +28,7 @@ PROVIDERS = Inference.get_available_providers() # list["claude", "google", "open
 
 chat = Inference.load_or_create_session("session_id")
 chat.active_inference_providers(PROVIDERS)
-chat.inteligence(7) # 0-10 fetched from omni.teamofsilicons.com for the given set of providers. combines model and effort.
+chat.model(cost=7, speed=10, intelligence=5, benchmark=" GDPval-AA v2") # best model fetched from omni.teamofsilicons.com for the given set of providers. combines model and effort.
 # replaces the session prompt given by the provider. to append, use .append_system_prompt, or .append_system_prompt_file
 chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either one
 
@@ -107,7 +107,7 @@ we do a similar thing, by allowing to disable all connected mcp servers & extern
 
 
 we want to cross-provider switching.
-because we rely only on intelligence scale based on all providers available, changing intelligence can result in changing the model provider we're using.
+because we rely only on preference scale based on all providers available, changing preference can result in changing the model provider we're using.
 
 for this, first its imp to understand how each provider streams and stores data inside sessions. then we maintain the same chat (ongoing in provider A) also in all other providers on trigger to use it with another provider's models.
 
@@ -179,9 +179,20 @@ Store things inside a .jsonl file and keep it the json. this is the source of tr
 Providers & Intelligence
 providers does 2 things. check if the cli is installed, and then checks which ones are active (authenticated).
 
-then intelligence is a scale from 0 to 10. each number is mapped to a model + effort and will be hosted on omni.teamofsilicons.com and cached. {0: {"provider": "google", "model": "gemini-3.7-flash", "effort": "high"}, ...} like this. at this endpoint, you can give it the providers you have, and it will give you 0-10 intelligence ranking. call this when switching providers or burst the cache after 60mins.
+chat.model(...) can take 3 kinds of things. either 0-10 intelligence score we have, or straight up model names and effort (model="gemini-3.7-flash", effort="low", fast=false}), or special keyword
 
-the string you give for model and effort should not be maintained as a local dict. it should be directly pluggable into the model switcher. this is done so that when a new model is launched, the slug can be changed on the remote, and it will be implemeted upstream. programatic changes to model name or effort is ok but it should require no upkeep when new models drop. follow the same pattern.
+oh, and codex and claude support a /fast for their models. false by default. but can be passed as true. make sure there is a way to do that. research on how its done. google does not have fast, so its ignored.
+
+key based model selection:
+best one per provider we have, ranked from left to right.
+"fast": [gpt-5.6-luna-max-fast, gemini-3.7-flash-low, claude-opus-5-low-fast]
+"code": [gpt-5.6-sol-max, claude-opus-5-max, gemini-3.7-flash-high]
+"design": [claude-opus-5-max, gpt-5.6-sol-max, gemini-3.7-flash-high]
+"research": [gpt-5.6-sol-max, claude-opus-5-max, gemini-3.7-flash-high]
+"cost": [gpt-5.6-luna-low, gemini-3.7-flash-low, claude-opus-5-low]
+"general": [gpt-5.6-sol-xhigh, claude-opus-5-medium, gemini-3.7-flash-high]
+
+the dict you give for model and effort should not be maintained as a local dict. it should be directly pluggable into the model switcher. this is done so that when a new model is launched, the slug can be changed on the remote, and it will be implemeted everywhere. programatic changes to model name or effort is ok but it should require no upkeep when new models drop. follow the same pattern that proviers use right now.
 
 intelligence scale will only include models from providers that you have access to.
 

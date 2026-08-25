@@ -14,7 +14,7 @@ from .chat import Chat, _normalize_snapshot
 from .client import DaemonError, call
 
 
-class NoDial(LookupError):
+class NoAnswer(LookupError):
     """The registry has never been reached for the requested providers."""
 
 
@@ -90,8 +90,8 @@ class Inference:
     def dial(providers: Sequence[str] | None = None) -> dict:
         """What each intelligence value from 0-10 means for a set of providers.
 
-        ``{"0": {"provider": ..., "model": ..., "effort": ...,
-        "intelligence": 0}, ...}``, straight from the registry omni routes by.
+        ``{"0": {"provider": ..., "model": ..., "effort": ..., "fast": false},
+        ...}``, straight from the registry omni routes by.
         Handy for showing a user what they are about to spend, and for finding
         the value that lands on a given provider.
         """
@@ -99,19 +99,14 @@ class Inference:
             dial = call(
                 "dial", providers=list(providers) if providers else None, timeout=60.0
             )
-            for rung in dial.values():
-                if isinstance(rung, dict):
-                    if "intelligence" not in rung and "level" in rung:
-                        rung["intelligence"] = rung["level"]
-                    rung.pop("level", None)
             return dial
         except DaemonError as exc:
-            # ``NoDial`` was public before the daemon split. The wire protocol
+            # ``NoDial`` was this exception's name until 0.7. The wire protocol
             # only carries an error sentence today, so translate precisely the
             # refusal the dial endpoint owns and leave every other daemon
             # failure as ``DaemonError``.
-            if str(exc).startswith("no dial for "):
-                raise NoDial(str(exc)) from exc
+            if str(exc).startswith("no answer for "):
+                raise NoAnswer(str(exc)) from exc
             raise
 
     @staticmethod
@@ -143,4 +138,4 @@ class Inference:
         return call("ping")
 
 
-__all__ = ["Inference", "ProviderHandle", "DaemonError", "NoDial"]
+__all__ = ["Inference", "ProviderHandle", "DaemonError", "NoAnswer"]

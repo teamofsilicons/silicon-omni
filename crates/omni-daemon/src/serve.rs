@@ -13,7 +13,7 @@ use omni_core::chat::Change;
 use omni_core::providers::test as double;
 use omni_core::session::Store;
 use omni_core::wire::{OPS, PROTOCOL, Reply, Request};
-use omni_core::{intelligence, providers};
+use omni_core::{choose, providers};
 
 use crate::registry::Registry;
 use crate::wiring::Connection;
@@ -197,19 +197,30 @@ impl Daemon {
             Some(named) if !named.is_empty() => named,
             _ => providers::available(None),
         };
-        let table = intelligence::table(&named);
-        if table.is_empty() {
-            return Err(format!(
-                "no dial for {named:?}: could not reach {} and nothing is cached",
-                intelligence::remote()
-            ));
+        /* Every rung of the dial, resolved one value at a time. There is no
+           whole-ladder call any more: the registry answers one question at a
+           time, and eleven cached answers cost nothing. */
+        let mut table = std::collections::BTreeMap::new();
+        let mut first_error = None;
+        for value in 0..choose::INTELLIGENCE_VALUES {
+            match choose::resolve(&choose::Ask::intelligence(value), &named) {
+                Ok(pick) => {
+                    table.insert(value.to_string(), pick);
+                }
+                Err(err) => {
+                    first_error.get_or_insert(err.to_string());
+                }
+            }
         }
-        Ok(json!(
-            table
-                .into_iter()
-                .map(|(intelligence, rung)| (intelligence.to_string(), rung))
-                .collect::<std::collections::BTreeMap<_, _>>()
-        ))
+        if table.is_empty() {
+            return Err(first_error.unwrap_or_else(|| {
+                format!(
+                    "no dial for {named:?}: could not reach {} and nothing is cached",
+                    choose::remote()
+                )
+            }));
+        }
+        Ok(json!(table))
     }
 
     fn account(&self, request: &Request) -> Result<Value, String> {
@@ -249,11 +260,16 @@ impl Daemon {
             }
             "install" => {
                 let names = request.providers.clone().unwrap_or_default();
-                let rungs: Vec<intelligence::Rung> = serde_json::from_value(
-                    request.value.get("rungs").cloned().unwrap_or(json!([])),
+                let picks: Vec<choose::Pick> = serde_json::from_value(
+                    request
+                        .value
+                        .get("picks")
+                        .or_else(|| request.value.get("rungs"))
+                        .cloned()
+                        .unwrap_or(json!([])),
                 )
-                .map_err(|err| format!("bad rungs: {err}"))?;
-                Ok(json!(double::install(&names, &rungs)))
+                .map_err(|err| format!("bad picks: {err}"))?;
+                Ok(json!(double::install(&names, &picks)))
             }
             "forget_all" => {
                 double::forget_all();
@@ -324,9 +340,13 @@ fn settings(value: &Value) -> Result<Vec<Change>, String> {
 fn change_from(what: &str, value: &Value) -> Result<Change, String> {
     Ok(match what {
         "providers" => Change::Providers(strings(value)?),
-        "level" | "intelligence" => {
-            Change::Intelligence(value.as_i64().ok_or("intelligence takes a number")?)
-        }
+        /* One setting, three shapes. A bare number is the dial, which is also
+           what a 0.5 client sends, so those keep working without a shim. */
+        "model" | "intelligence" => Change::Model(match value.as_i64() {
+            Some(number) => choose::Ask::intelligence(number),
+            None => serde_json::from_value::<choose::Ask>(value.clone())
+                .map_err(|err| format!("model takes a number, a key, or a model: {err}"))?,
+        }),
         "system_prompt" => Change::SystemPrompt(text_of(value)?),
         "append_system_prompt" => Change::AppendSystemPrompt(text_of(value)?),
         "subagents" => Change::Subagents(flag(value)?),

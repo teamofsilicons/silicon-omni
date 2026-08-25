@@ -9,7 +9,7 @@ speak to it.
 from omni import Inference, Event
 
 chat = Inference.load_or_create_session("my-session")
-chat.intelligence(7)
+chat.model("code")
 
 @chat.on_event
 def handle(event):
@@ -78,7 +78,7 @@ cargo install omni-daemon silicon-omni-cli
 
 ```bash
 silicon-omni chat my-session
-so send --intelligence 7 my-session "what changed in this repo today?"
+so send --key code my-session "what changed in this repo today?"
 so logs --since 42 my-session
 so history --since 0 my-session
 so sessions
@@ -90,8 +90,7 @@ so daemon status
 
 Every streaming command accepts `--json`, which emits one `Event` per line; add
 `--frames` only when a low-level integration needs transport envelopes and session
-snapshots. The compatibility names `--level`, `--from`, `events`, and `attach` still
-work, but new commands use `--intelligence`, `--since`, `history`, and `logs`.
+snapshots. 0.7 removed the 0.4 aliases `--level`, `--from`, `events` and `attach`. Use `--key`, `--intelligence`, `--model`, `--since`, `history`, and `logs`.
 `silicon-omni help` (or `so help`) lists session settings, account login, history,
 and daemon lifecycle commands. In a checkout, build them with
 `cargo build --release -p omni-daemon -p silicon-omni-cli`.
@@ -107,12 +106,12 @@ cargo add silicon-omni
 ```
 
 ```rust
-use silicon_omni::{Event, Inference};
+use silicon_omni::{Ask, Event, Inference};
 
 fn main() -> silicon_omni::Result<()> {
     let inference = Inference::connect()?;
     let mut chat = inference.load_or_create_session("my-session", None);
-    chat.intelligence(7)?.start()?;
+    chat.model("code")?.start()?;
     chat.send("what changed in this repo today?")?;
 
     for event in chat.events() {
@@ -136,61 +135,72 @@ available under `silicon_omni::raw` for integrations that need the wire itself.
 
 ---
 
-## The dial
+## Saying what should answer
 
-There is no model picker. There is one number.
+There is no model picker. There are three ways to say what the work needs, and
+exactly one of them per call.
 
 ```python
-chat.intelligence(0)    # cheapest thing worth using
-chat.intelligence(10)   # best thing you have
+chat.model("code")                                    # a word
+chat.model(intelligence=7)                            # a number
+chat.model(model="gemini-3.7-flash-low",              # a model
+           provider="google", fast=False)
 ```
 
-Behind it is a graph, and omni is not the one drawing it. Every model the three
-CLIs can run is plotted by its
-[GDPval-AA v2](https://artificialanalysis.ai/evaluations/gdpval-aa) Elo — Artificial
-Analysis' blind pairwise scoring of real economically valuable work, anchored so that a
-human expert is 1000 — against the dollars they measured it cost to earn that score.
+**A word** is a shortlist somebody chose, best first, and the first vendor on it
+you are signed into answers. Losing a vendor walks you one place down a list
+rather than into an argument.
 
-Only the **left edge** of that graph becomes a dial: a model earns a rung if nothing
-else is both better *and* cheaper. Intelligence 10 is the top of the edge, and the dial
-walks down-left from there, so every step down is a real saving and never a sideways
-move.
+| key | for |
+|---|---|
+| `fast` | answer soonest |
+| `code` | write and change code |
+| `design` | make something somebody has to look at |
+| `research` | read a lot, and be right |
+| `cost` | spend as little as the job allows |
+| `general` | no strong opinion |
 
-```
-intelligence    Elo   $/task   model
-          10  1844.7  6.7660   claude-opus-5 max
-           9  1813.8  4.9630   claude-opus-5 xhigh
-           8  1732.8  3.0271   claude-opus-5 high
-           7  1678.9  2.1141   gpt-5.6-sol xhigh
-           6  1621.2  1.3708   gpt-5.6-sol high
-           5  1619.6  1.3641   claude-opus-5 medium
-           4  1578.3  0.1022   gpt-5.6-luna max
-           3  1525.7  0.0667   gpt-5.6-luna xhigh
-           2  1465.8  0.0412   gpt-5.6-luna high
-           1  1274.5  0.0133   gpt-5.6-luna medium
-           0  1155.6  0.0072   gpt-5.6-luna low
-```
+The lists live in the registry and are edited by hand. That is deliberate: 0.6
+scored every model on three normalised axes and took a weighted sum, and it kept
+producing answers that were defensible and wrong — three models within one
+percent of each other and a hundred Elo apart, and a winner that moved when a
+constant did. Ranking is not judgement.
 
-Intelligence 4 is worth staring at: GPT-5.6 Luna at max effort scores within 15% of the top of
-the board for **66× less money**, which is why everything between it and Opus 5 falls
-off the edge.
+**A number** is the dial, 0 to 10. Every model the three CLIs can run is plotted
+by its score on a benchmark against the dollars it measurably cost to earn that
+score, and only the **left edge** becomes a dial: a model earns a rung when
+nothing else is both better *and* cheaper. `bench` picks the board —
+`gdpval-aa`, `terminal-bench`, `agents-last-exam`, `design-arena-full-stack`, or
+`artificial-analysis-intelligence-index`. Names carry no version, so
+Terminal-Bench 2.1 becoming 3 changes nothing here.
 
-There is one dial per set of providers, because losing a vendor puts models back on the
-dial that another vendor's were shadowing. With fewer providers the edge is shorter and
-intelligence values start sharing a rung — that is the dial telling you there is nothing
-in between worth picking.
+**A model** is you already knowing. The name goes to the CLI verbatim, so a
+model released this morning works without omni knowing about it — and it is
+answered on the machine, with no network at all.
 
-**omni does none of this arithmetic, and knows the name of no model.** It asks
-`omni.teamofsilicons.com/intelligence.json` for the finished map matching the providers
-it has, and keeps it in `~/.omni/cache` for an hour. `model` and `effort` go to the CLI
-verbatim, so a model released tomorrow needs no release of this package — only a commit
-to [`models-gdpval.json`](https://github.com/teamofsilicons/omnipotent) in the registry
+### Running hot
+
+`fast` asks a CLI for its faster tier.
+
+| provider | how |
+|---|---|
+| Codex | `-c service_tier="fast"`, a launch flag — so a hot chat rents its own warm app-server and a normal one is untouched |
+| Claude Code | a fast mode on its largest models, opted into per session |
+| Antigravity | no such thing. Asking is **ignored rather than refused** |
+
+**omni does none of this choosing, and knows the name of no model.** It asks
+`omni.teamofsilicons.com/choose.json` with what it was told and which CLIs are
+signed in, and keeps the answer in `~/.omni/cache` for an hour. `model` and
+`effort` go to the CLI verbatim, so a model released tomorrow needs no release
+of this package — only a commit to
+[`models.json`](https://github.com/teamofsilicons/omnipotent) in the registry
 repo. Point somewhere else with `OMNI_REGISTRY`.
 
-Nothing ships in the wheel as a fallback. A model list baked into a release is a model
-list that goes quietly stale, and a wrong recommendation is worse than an honest refusal
-— so a machine that has never reached the registry raises `NoDial` rather than guessing.
-One that has run before keeps working from its cache, expired or not.
+Nothing ships in the wheel as a fallback. A model list baked into a release is a
+model list that goes quietly stale, and a wrong recommendation is worse than an
+honest refusal — so a machine that has never reached the registry raises
+`NoAnswer` rather than guessing. One that has run before keeps working from its
+cache, expired or not.
 
 ## Events
 
@@ -308,7 +318,7 @@ rather than dropping the message on the floor.
 This is the rule the whole design hangs off.
 
 ```python
-chat.intelligence(9)              # noted now
+chat.model("research")            # noted now
 chat.active_inference_providers(["claude", "openai"])
 chat.system_prompt("...")
 chat.enable_subagents()

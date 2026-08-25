@@ -56,12 +56,6 @@ def test_a_pre_versioned_file_defaults_to_schema_one():
     assert Event.from_dict({"type": "text", "text": "old"}).v == 1
 
 
-def test_old_event_extras_use_the_public_intelligence_spelling():
-    event = Event.from_dict(
-        {"type": "config", "text": "intelligence", "extra": {"level": 7}}
-    )
-    assert event.extra == {"intelligence": 7}
-
 
 def test_the_daemon_and_python_describe_an_event_the_same_way(one):
     """The one that matters: two languages, one schema.

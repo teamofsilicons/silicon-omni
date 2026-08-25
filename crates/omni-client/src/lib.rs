@@ -4,13 +4,18 @@
 //! [`Inference`] is the front door, a [`Chat`] is a persistent conversation,
 //! and everything it emits is an [`Event`].
 //!
+//! Say what should answer one of three ways: a key somebody curated, a number
+//! on the dial, or a model by name.
+//!
 //! ```no_run
-//! use silicon_omni::{Event, Inference};
+//! use silicon_omni::{Ask, Event, Inference};
 //!
 //! # fn main() -> silicon_omni::Result<()> {
 //! let inference = Inference::connect()?;
 //! let mut chat = inference.load_or_create_session("demo", None);
-//! chat.intelligence(7)?.start()?;
+//! chat.model(Ask::key("code"))?.start()?;
+//! // or Ask::intelligence(7)
+//! // or Ask::model("gemini-3.7-flash-low").from("google")
 //! chat.send("hello")?;
 //!
 //! for event in chat.events() {
@@ -64,8 +69,7 @@ use std::time::{Duration, Instant};
 #[deprecated(note = "use `event_type` or `Event::TEXT` style constants")]
 pub use omni_core::events::event_type as kind;
 pub use omni_core::events::{AUTH, CRASH, LIMIT, UNAVAILABLE, event_type};
-pub use omni_core::intelligence::Rung;
-pub use omni_core::intelligence::Rung as IntelligenceRung;
+pub use omni_core::choose::{Ask, Pick};
 pub use omni_core::wire::{Frame, PROTOCOL, Request};
 use omni_core::wire::{Incoming, Reply, read_line};
 pub use omni_core::{Event, Snapshot};
@@ -87,7 +91,7 @@ pub enum DaemonError {
     /// The daemon answered the request with `ok: false`.
     Daemon(String),
     /// The registry has never produced a dial for the requested providers.
-    NoDial(String),
+    NoAnswer(String),
     /// No reply arrived before the request deadline.
     Timeout {
         op: String,
@@ -114,7 +118,7 @@ impl fmt::Display for DaemonError {
             Error::Io(message)
             | Error::Json(message)
             | Error::Daemon(message)
-            | Error::NoDial(message) => {
+            | Error::NoAnswer(message) => {
                 write!(f, "{message}")
             }
             Error::Timeout { op, after } => {
@@ -570,12 +574,12 @@ impl Client {
         decode("providers", self.call(request)?)
     }
 
-    pub fn dial(&self, providers: Option<Vec<String>>) -> Result<BTreeMap<i64, Rung>> {
+    pub fn dial(&self, providers: Option<Vec<String>>) -> Result<BTreeMap<i64, Pick>> {
         let mut request = Request::new(0, "dial");
         request.providers = providers;
         match self.call(request) {
             Err(Error::Daemon(message)) if message.starts_with("no dial for ") => {
-                Err(Error::NoDial(message))
+                Err(Error::NoAnswer(message))
             }
             answer => decode("dial", answer?),
         }
@@ -975,7 +979,7 @@ mod tests {
         Snapshot {
             session: session.into(),
             status: "waiting".into(),
-            intelligence: 5,
+            ask: Ask::intelligence(5),
             providers: vec!["test".into()],
             provider: "test".into(),
             model: "double".into(),
@@ -1199,7 +1203,7 @@ mod tests {
         });
         assert!(matches!(
             client.dial(Some(vec!["test".into()])),
-            Err(Error::NoDial(_))
+            Err(Error::NoAnswer(_))
         ));
         server.join().unwrap();
     }

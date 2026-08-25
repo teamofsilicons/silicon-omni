@@ -12,14 +12,14 @@ import pytest
 from conftest import in_turn, settled
 
 import omni.inference as inference_module
-from omni import Event, Inference, NoDial
+from omni import Event, Inference, NoAnswer
 from omni.chat import Chat
 from omni.client import DaemonError, Link
 from omni.providers import test as double
 
 # ------------------------------------------------------------- vocabulary
 
-def test_python_sends_intelligence_and_normalizes_old_snapshot_spelling(
+def test_python_sends_the_ask_in_every_shape(
     monkeypatch, name
 ):
     class StubLink:
@@ -42,7 +42,7 @@ def test_python_sends_intelligence_and_normalizes_old_snapshot_spelling(
                     "snapshot": {
                         "session": name,
                         "status": "waiting",
-                        "level": 7,
+                        "ask": {"how": "intelligence", "value": 7},
                         "effort": "high",
                         "seq": -1,
                         "queued": 0,
@@ -54,7 +54,7 @@ def test_python_sends_intelligence_and_normalizes_old_snapshot_spelling(
                     "snapshot": {
                         "session": name,
                         "status": "waiting",
-                        "level": 6,
+                        "ask": {"how": "key", "key": "code"},
                         "effort": "medium",
                         "seq": -1,
                         "queued": 0,
@@ -70,73 +70,54 @@ def test_python_sends_intelligence_and_normalizes_old_snapshot_spelling(
     monkeypatch.setattr(Link, "open", classmethod(lambda cls: link))
 
     chat = Chat(name, [])
-    chat.intelligence(7)
+    chat.model(intelligence=7)
     chat.start()
     assert link.requests[0][0] == "open"
     assert link.requests[0][1]["value"] == [
-        {"what": "intelligence", "value": 7}
+        {"what": "model", "value": {"how": "intelligence", "value": 7}}
     ]
-    assert chat.current_intelligence == 7
+    assert chat.current_ask == {"how": "intelligence", "value": 7}
     assert chat.effort == "high"
     assert "level" not in chat.state
 
-    chat.intelligence(8)
+    chat.model(intelligence=8, bench="terminal-bench")
     assert link.requests[-1] == (
         "set",
-        {"session": name, "what": "intelligence", "value": 8},
+        {
+            "session": name,
+            "what": "model",
+            "value": {"how": "intelligence", "value": 8, "bench": "terminal-bench"},
+        },
     )
 
+    chat.model("code")
+    assert link.requests[-1][1]["value"] == {"how": "key", "key": "code"}
+
+    chat.model(model="gemini-3.7-flash-low", provider="google", effort="", fast=True)
+    assert link.requests[-1][1]["value"] == {
+        "how": "model",
+        "model": "gemini-3.7-flash-low",
+        "effort": "",
+        "fast": True,
+        "provider": "google",
+    }
+
+    for bad in ({}, {"key": "code", "intelligence": 4}):
+        try:
+            chat.model(**bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"saying {bad} should be refused")
+
     refreshed = chat.refresh()
-    assert refreshed["intelligence"] == 6
+    assert refreshed["ask"] == {"how": "key", "key": "code"}
     assert refreshed["effort"] == "medium"
     assert "level" not in refreshed
     chat.detach()
 
 
-def test_the_misspelled_intelligence_method_is_only_a_deprecated_alias(name):
-    chat = Chat(name, [])
-    with pytest.warns(DeprecationWarning, match="Chat.intelligence"):
-        chat.inteligence(4)
-    assert chat.pending == [("intelligence", 4)]
 
-
-def test_public_session_snapshots_call_the_setting_intelligence(monkeypatch):
-    monkeypatch.setattr(
-        inference_module,
-        "call",
-        lambda op: {
-            "sessions": [
-                {
-                    "listeners": 1,
-                    "snapshot": {
-                        "session": "demo",
-                        "status": "waiting",
-                        "level": 5,
-                        "effort": "medium",
-                    },
-                }
-            ]
-        },
-    )
-
-    snapshot = Inference.sessions()[0]["snapshot"]
-    assert snapshot["intelligence"] == 5
-    assert snapshot["effort"] == "medium"
-    assert "level" not in snapshot
-
-
-def test_public_dial_rungs_normalize_an_old_daemons_level(monkeypatch):
-    monkeypatch.setattr(
-        inference_module,
-        "call",
-        lambda *args, **kwargs: {
-            "7": {"provider": "claude", "model": "sonnet", "level": 7}
-        },
-    )
-
-    rung = Inference.dial()["7"]
-    assert rung["intelligence"] == 7
-    assert "level" not in rung
 
 
 def test_unauthenticated_provider_autoremoval_has_both_toggles(name):
@@ -268,13 +249,13 @@ def test_seq_only_ever_goes_up(one):
 
 def test_raising_intelligence_moves_the_conversation_and_keeps_it(pair):
     chat, big, small = pair
-    chat.intelligence(0)
+    chat.model(intelligence=0)
     chat.start()
     chat.send("remember VIOLET-7")
     assert settled(chat)
     assert chat.provider == small
 
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     chat.send("[recall]")
     assert settled(chat)
     assert chat.provider == big
@@ -284,7 +265,7 @@ def test_raising_intelligence_moves_the_conversation_and_keeps_it(pair):
 
 def test_nothing_changes_mid_turn(pair):
     chat, big, small = pair
-    chat.intelligence(0)
+    chat.model(intelligence=0)
     chat.start()
     chat.send("first")
     assert settled(chat)
@@ -292,7 +273,7 @@ def test_nothing_changes_mid_turn(pair):
     double.running(small).autoreply = False
     chat.send("second")
     assert in_turn(chat)
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     import time
 
     time.sleep(0.3)
@@ -305,7 +286,7 @@ def test_nothing_changes_mid_turn(pair):
 
 def test_settings_asked_for_before_start_are_applied_before_anything_runs(pair):
     chat, big, small = pair
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     chat.start()
     chat.send("hello")
     assert settled(chat)
@@ -320,7 +301,7 @@ def test_settings_asked_for_before_start_are_applied_before_anything_runs(pair):
 
 def test_losing_a_login_moves_the_chat_to_whoever_is_left(pair):
     chat, big, small = pair
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     chat.start()
     chat.send("hello")
     assert settled(chat)
@@ -348,7 +329,7 @@ def test_losing_a_login_moves_the_chat_to_whoever_is_left(pair):
 def test_turning_the_failover_off_reports_and_stops(pair):
     chat, big, small = pair
     chat.disable_autoremoving_unauthenticated_providers()
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     chat.start()
     chat.send("hello")
     assert settled(chat)
@@ -365,19 +346,19 @@ def test_a_stopped_session_says_so_rather_than_hanging(one):
         one.send("hello")
 
 
-def test_asking_for_providers_omni_has_no_dial_for_is_reported(one):
+def test_asking_for_providers_omni_cannot_answer_for_is_reported(one):
     one.active_inference_providers(["nobody-at-all"])
     one.send("hello")
     assert settled(one)
     trouble = [
-        event for event in one.history() if event.type == Event.ERROR and "no dial" in event.error
+        event for event in one.history() if event.type == Event.ERROR and "no answer" in event.error
     ]
     assert trouble, [event.type for event in one.history()]
     assert one.status == "waiting", "reported, not stuck on busy"
 
 
-def test_asking_for_a_missing_dial_preserves_the_public_exception(name):
-    with pytest.raises(NoDial, match="no dial"):
+def test_having_nothing_to_answer_with_preserves_the_public_exception(name):
+    with pytest.raises(NoAnswer, match="no answer"):
         Inference.dial([f"nobody-{name}"])
 
 

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.7.0
+
+**There are three ways to say what should answer, and `chat.model()` takes all
+of them.** A word — `chat.model("code")` — is a shortlist somebody chose, best
+first, and the first vendor on it you are signed into answers. A number —
+`chat.model(intelligence=7)` — is the dial, still the left edge of a board where
+a model earns a rung when nothing else is both better and cheaper. A model —
+`chat.model(model="gemini-3.7-flash-low", provider="google")` — is you already
+knowing, passed to the CLI verbatim and resolved on the machine with no network
+at all. Saying two of them in one call is refused rather than resolved by
+precedence.
+
+**0.6's weighted selector is gone.** It scored every model on three normalised
+axes and took a weighted sum, and it kept producing answers that were defensible
+and wrong: three models within one percent of each other and a hundred Elo
+apart, and a winner that moved when a normalisation constant did. Ranking is not
+judgement, so the judgement is written down instead, in the registry, by hand.
+
+**`fast` asks a CLI for its faster tier.** For Codex it is a launch flag,
+`-c service_tier="fast"` — and because a flag set is what a shared app-server is
+keyed on, a hot chat rents its own warm server while a normal one is untouched
+by it. Claude Code has a fast mode on its largest models, opted into per session.
+Antigravity has no such thing, and asking for it there is ignored rather than
+refused.
+
+**The registry endpoint moved to `/choose.json`,** and the cache with it. The
+old `/intelligence.json` no longer exists, so 0.6 and earlier cannot resolve a
+model at all; they fail with `NoAnswer` rather than guessing.
+
+**Removed, rather than deprecated.** `Chat.inteligence()`, the misspelled alias.
+`Chat.intelligence()` itself, folded into `Chat.model()`. The `level` wire key
+and every translation of it. The CLI aliases `--level`, `--from`, `events` and
+`attach`. `NoDial` is now `NoAnswer`. The `model` getter is `running_model`,
+because `model` is the setter now — in Python and in Rust.
+
 ## 0.5.0
 
 **Python, Rust, and the terminal now share one public vocabulary.** `Inference`

@@ -5,7 +5,7 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use silicon_omni::{Client, Event, Frame, OpenOptions, Request, Session, Snapshot, event_type};
+use silicon_omni::{Ask, Client, Event, Frame, OpenOptions, Request, Session, Snapshot, event_type};
 
 const HELP: &str = r#"silicon-omni (so) — one conversation across Claude, Codex, and Antigravity
 
@@ -19,7 +19,7 @@ Usage:
   silicon-omni stop SESSION                           stop a live session
   silicon-omni set SESSION SETTING VALUE              queue a setting change
   silicon-omni providers [PROVIDER...]                list available providers
-  silicon-omni dial [PROVIDER...]                     show the 0–10 intelligence dial
+  silicon-omni dial [PROVIDER...]                     show the 0–10 dial
   silicon-omni account PROVIDER ACTION [CODE]         inspect or authenticate an account
   silicon-omni daemon start|status|stop               manage the persistent daemon
   silicon-omni ping                                   show daemon information
@@ -27,16 +27,23 @@ Usage:
 
 Every command is also available through the short `so` executable.
 
+What should answer (say exactly one):
+  --key WORD          a shortlist somebody chose: fast, code, design,
+                      research, cost, general
+  --intelligence 0..10 [--bench BOARD]
+                      the dial — the left edge of a board, where a model earns
+                      a rung when nothing else is both better and cheaper
+  --model NAME [--effort LEVEL] [--provider P] [--fast]
+                      you already know. NAME goes to the CLI verbatim
+
 Stream options:
   --since SEQ         first event sequence to replay (send/chat default: -1)
   --providers A,B     limit providers when opening the session
-  --intelligence 0..10
-                      set intelligence as part of opening
   --json              emit Events as JSON lines
   --frames            emit raw transport Frames as JSON lines
 
-Compatibility aliases:
-  attach = logs, events = history, --from = --since, --level = --intelligence
+--fast asks a CLI for its faster tier. Codex takes it; Claude Code has one on
+its largest models; Antigravity has none and ignores it.
 
 Account actions:
   status (default), installed, limits, start-auth, finish-auth CODE, forget
@@ -44,7 +51,7 @@ Account actions:
 Environment:
   OMNI_HOME           state directory (default: ~/.omni)
   OMNI_DAEMON         exact omnid binary to start
-  OMNI_REGISTRY       intelligence registry endpoint
+  OMNI_REGISTRY       registry endpoint that answers what to run
 "#;
 
 #[derive(Debug)]
@@ -109,8 +116,8 @@ fn run(mut args: Vec<String>) -> Result<()> {
         "dial" => dial(args)?,
         "sessions" => sessions(no_args(command, args)?)?,
         "status" => status(one_arg(command, args)?)?,
-        "history" | "events" => history(args)?,
-        "logs" | "attach" => logs(args)?,
+        "history" => history(args)?,
+        "logs" => logs(args)?,
         "send" => stream(args, false)?,
         "chat" => stream(args, true)?,
         "stop" => stop(one_arg(command, args)?)?,
@@ -205,7 +212,7 @@ fn sessions(_: ()) -> Result<()> {
             state.status,
             state.provider,
             state.model,
-            state.intelligence,
+            state.ask,
             live.listeners
         );
     }
@@ -220,7 +227,7 @@ fn status(session: String) -> Result<()> {
 
 fn history(mut args: Vec<String>) -> Result<()> {
     let output = output(&mut args, false)?;
-    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(0);
+    let since = take_i64(&mut args, "--since")?.unwrap_or(0);
     let session = one_arg("history", args)?;
     for event in Client::connect()?.events(&session, since)? {
         print_event(&event, output)?;
@@ -230,7 +237,7 @@ fn history(mut args: Vec<String>) -> Result<()> {
 
 fn logs(mut args: Vec<String>) -> Result<()> {
     let output = output(&mut args, true)?;
-    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(0);
+    let since = take_i64(&mut args, "--since")?.unwrap_or(0);
     let providers = take_providers(&mut args)?;
     let session_id = one_arg("logs", args)?;
     let client = Client::connect()?;
@@ -253,11 +260,8 @@ fn logs(mut args: Vec<String>) -> Result<()> {
 
 fn stream(mut args: Vec<String>, interactive: bool) -> Result<()> {
     let output = output(&mut args, true)?;
-    let since = take_aliased_i64(&mut args, "--since", "--from")?.unwrap_or(-1);
-    let intelligence = take_aliased_i64(&mut args, "--intelligence", "--level")?;
-    if intelligence.is_some_and(|intelligence| !(0..=10).contains(&intelligence)) {
-        return Err(CliError("--intelligence must be between 0 and 10".into()));
-    }
+    let since = take_i64(&mut args, "--since")?.unwrap_or(-1);
+    let ask = take_ask(&mut args)?;
     let providers = take_providers(&mut args)?;
     reject_options(&args)?;
     if args.is_empty() {
@@ -278,8 +282,8 @@ fn stream(mut args: Vec<String>, interactive: bool) -> Result<()> {
     if let Some(providers) = providers {
         options = options.providers(providers);
     }
-    if let Some(intelligence) = intelligence {
-        options = options.setting("intelligence", intelligence);
+    if let Some(ask) = ask {
+        options = options.setting("model", serde_json::to_value(ask).unwrap_or_default());
     }
     let mut session = client.open(options)?;
 
@@ -552,31 +556,18 @@ fn print_value(value: &Value) {
 }
 
 fn public_snapshot(snapshot: &Snapshot) -> Value {
-    let mut value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
-    rename_key(&mut value, "level", "intelligence");
-    value
+    serde_json::to_value(snapshot).unwrap_or(Value::Null)
 }
 
 fn public_event(event: &Event) -> Value {
-    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
-    if let Some(extra) = value.get_mut("extra") {
-        rename_key(extra, "level", "intelligence");
-    }
-    value
+    serde_json::to_value(event).unwrap_or(Value::Null)
 }
 
-fn rename_key(value: &mut Value, old: &str, new: &str) {
-    let Some(object) = value.as_object_mut() else {
-        return;
-    };
-    if let Some(value) = object.remove(old) {
-        object.entry(new).or_insert(value);
-    }
-}
 
+/// `so set S intelligence 7` and `so set S model code` are the same setting.
 fn canonical_setting(what: &str) -> String {
     match what {
-        "level" => "intelligence".into(),
+        "intelligence" | "key" => "model".into(),
         other => other.into(),
     }
 }
@@ -585,11 +576,24 @@ fn parse_setting(what: &str, raw: &str) -> Result<Value> {
     if what == "providers" && !raw.trim_start().starts_with('[') {
         return Ok(json!(split_providers(raw)));
     }
-    if matches!(what, "level" | "intelligence") {
-        return raw
-            .parse::<i64>()
-            .map(Value::from)
-            .map_err(|_| CliError(format!("{what} takes a number")));
+    /* One setting, three shapes, told apart by what you typed: a number is the
+       dial, a bare word is a key, and JSON is an ask spelled out in full. */
+    if matches!(what, "model" | "intelligence" | "key") {
+        let raw = raw.trim();
+        if let Ok(value) = raw.parse::<i64>() {
+            if !(0..=10).contains(&value) {
+                return Err(CliError("intelligence must be between 0 and 10".into()));
+            }
+            return Ok(json!({"how": "intelligence", "value": value}));
+        }
+        if raw.starts_with('{') {
+            return serde_json::from_str::<Value>(raw)
+                .map_err(|err| CliError(format!("model takes a word, a number, or json: {err}")));
+        }
+        if what == "intelligence" {
+            return Err(CliError("intelligence takes a number".into()));
+        }
+        return Ok(json!({"how": "key", "key": raw.to_ascii_lowercase()}));
     }
     if matches!(what, "subagents" | "mcp" | "autoremove") {
         return raw
@@ -629,6 +633,59 @@ fn take_i64(args: &mut Vec<String>, name: &str) -> Result<Option<i64>> {
         .transpose()
 }
 
+/// What should answer, said one of three ways.
+///
+/// `--key code`, or `--intelligence 7` (with an optional `--bench`), or
+/// `--model NAME` with `--effort` and `--fast`. Saying two of them is a
+/// mistake worth refusing rather than resolving by precedence.
+fn take_ask(args: &mut Vec<String>) -> Result<Option<Ask>> {
+    let key = take_value(args, "--key")?;
+    let intelligence = take_i64(args, "--intelligence")?;
+    let bench = take_value(args, "--bench")?;
+    let model = take_value(args, "--model")?;
+    let effort = take_value(args, "--effort")?;
+    let fast = take_flag(args, "--fast");
+    let provider = take_value(args, "--provider")?;
+
+    let said: Vec<&str> = [
+        key.is_some().then_some("--key"),
+        intelligence.is_some().then_some("--intelligence"),
+        model.is_some().then_some("--model"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if said.len() > 1 {
+        return Err(CliError(format!("say one of {}, not several", said.join(", "))));
+    }
+
+    if let Some(key) = key {
+        return Ok(Some(Ask::key(&key)));
+    }
+    if let Some(value) = intelligence {
+        if !(0..=10).contains(&value) {
+            return Err(CliError("--intelligence must be between 0 and 10".into()));
+        }
+        let ask = Ask::intelligence(value);
+        return Ok(Some(match bench {
+            Some(bench) => ask.on(&bench),
+            None => ask,
+        }));
+    }
+    if let Some(model) = model {
+        let mut ask = Ask::model(&model).fast(fast);
+        if let Some(effort) = effort {
+            ask = ask.effort(&effort);
+        }
+        if let Some(provider) = provider {
+            ask = ask.from(&provider);
+        }
+        return Ok(Some(ask));
+    }
+    Ok(None)
+}
+
+#[allow(dead_code)]
 fn take_aliased_i64(
     args: &mut Vec<String>,
     canonical: &str,
@@ -746,8 +803,23 @@ mod tests {
 
     #[test]
     fn setting_values_follow_the_wire_types() {
-        assert_eq!(canonical_setting("level"), "intelligence");
-        assert_eq!(parse_setting("intelligence", "7").unwrap(), json!(7));
+        assert_eq!(canonical_setting("intelligence"), "model");
+        assert_eq!(canonical_setting("key"), "model");
+        // one setting, three shapes, told apart by what was typed
+        assert_eq!(
+            parse_setting("intelligence", "7").unwrap(),
+            json!({"how": "intelligence", "value": 7})
+        );
+        assert_eq!(
+            parse_setting("model", "code").unwrap(),
+            json!({"how": "key", "key": "code"})
+        );
+        assert_eq!(
+            parse_setting("model", r#"{"how":"model","model":"x","effort":"","fast":true}"#).unwrap(),
+            json!({"how": "model", "model": "x", "effort": "", "fast": true})
+        );
+        assert!(parse_setting("intelligence", "code").is_err(), "a number, or nothing");
+        assert!(parse_setting("intelligence", "44").is_err(), "0 to 10");
         assert_eq!(parse_setting("mcp", "false").unwrap(), json!(false));
         assert_eq!(
             parse_setting("providers", "claude, openai").unwrap(),
@@ -760,11 +832,11 @@ mod tests {
     }
 
     #[test]
-    fn public_json_names_intelligence_and_keeps_event_payloads_exact() {
+    fn public_json_carries_the_ask_and_keeps_event_payloads_exact() {
         let snapshot = Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            intelligence: 5,
+            ask: Ask::intelligence(5),
             providers: Vec::new(),
             provider: String::new(),
             model: String::new(),
@@ -775,24 +847,31 @@ mod tests {
             queued: 0,
         };
         let public = public_snapshot(&snapshot);
-        assert_eq!(public["intelligence"], 5);
-        assert!(public.get("level").is_none());
+        assert_eq!(public["ask"]["how"], "intelligence");
+        assert_eq!(public["ask"]["value"], 5);
+        assert!(public.get("level").is_none(), "the 0.5 key is gone");
 
+        // a provider's own payload is passed through untouched: `level` here
+        // is that provider's word, not ours, and renaming it would corrupt it
         let mut event = Event::new(Event::TOOL_CALL);
         event.args.insert("level".into(), json!("provider-native"));
-        event.extra.insert("level".into(), json!(5));
         let public = public_event(&event);
         assert_eq!(public["args"]["level"], "provider-native");
-        assert_eq!(public["extra"]["intelligence"], 5);
-        assert!(public["extra"].get("level").is_none());
     }
 
     #[test]
     fn help_leads_with_the_shared_vocabulary() {
         assert!(HELP.contains("history [--since SEQ]"));
         assert!(HELP.contains("logs [OPTIONS]"));
+        // all three ways to say what should answer are documented
+        assert!(HELP.contains("--key WORD"));
         assert!(HELP.contains("--intelligence 0..10"));
-        assert!(HELP.contains("attach = logs, events = history"));
+        assert!(HELP.contains("--model NAME"));
+        assert!(HELP.contains("--fast"));
+        assert!(
+            !HELP.contains("attach = logs"),
+            "the 0.4 aliases are gone in 0.7"
+        );
     }
 
     #[test]
@@ -801,7 +880,7 @@ mod tests {
         let snapshot = Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            intelligence: 5,
+            ask: Ask::intelligence(5),
             providers: Vec::new(),
             provider: String::new(),
             model: String::new(),

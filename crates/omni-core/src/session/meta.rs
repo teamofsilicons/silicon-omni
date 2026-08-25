@@ -442,7 +442,7 @@ mod tests {
         meta.bind("claude", "original").unwrap();
         meta.mark_synced("claude", 3).unwrap();
         meta.set("cwd", json!("/kept")).unwrap();
-        meta.set_setting("level", json!(4)).unwrap();
+        meta.set_setting("ask", json!(4)).unwrap();
 
         let valid_path = meta.path.clone();
         let blocker = paths::home().join("not-a-directory");
@@ -452,10 +452,10 @@ mod tests {
         assert!(meta.bind("claude", "lost").is_err());
         assert!(meta.mark_synced("claude", 99).is_err());
         assert!(meta.set("cwd", json!("/lost")).is_err());
-        assert!(meta.set_setting("level", json!(9)).is_err());
+        assert!(meta.set_setting("ask", json!(9)).is_err());
         assert_eq!(meta.native("claude"), ("original".into(), 3));
         assert_eq!(meta.get_str("cwd").as_deref(), Some("/kept"));
-        assert_eq!(meta.setting("level"), Some(&json!(4)));
+        assert_eq!(meta.setting("ask"), Some(&json!(4)));
 
         meta.path = valid_path;
         meta.mark_synced("claude", 4).unwrap();
@@ -468,14 +468,14 @@ mod tests {
         let mut meta = Meta::open("s");
         meta.set_setting("cwd", json!("/kept")).unwrap();
         meta.initialize_settings(
-            json!({"cwd": "/new", "level": 7})
+            json!({"cwd": "/new", "ask": 7})
                 .as_object()
                 .cloned()
                 .unwrap(),
         )
         .unwrap();
         assert_eq!(meta.setting_str("cwd").as_deref(), Some("/kept"));
-        assert_eq!(meta.setting("level"), Some(&json!(7)));
+        assert_eq!(meta.setting("ask"), Some(&json!(7)));
     }
 
     #[test]
@@ -484,13 +484,13 @@ mod tests {
 
         let _home = scratch_home("meta-idempotent");
         let mut meta = Meta::open("s");
-        meta.set_setting("level", json!(4)).unwrap();
+        meta.set_setting("ask", json!(4)).unwrap();
         let inode = fs::metadata(&meta.path).unwrap().ino();
 
-        meta.set_setting("level", json!(4)).unwrap();
+        meta.set_setting("ask", json!(4)).unwrap();
 
         assert_eq!(fs::metadata(&meta.path).unwrap().ino(), inode);
-        assert_eq!(meta.setting("level"), Some(&json!(4)));
+        assert_eq!(meta.setting("ask"), Some(&json!(4)));
     }
 
     #[test]

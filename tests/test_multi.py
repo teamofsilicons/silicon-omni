@@ -50,14 +50,14 @@ def test_either_client_can_send(one, name):
 
 def test_a_new_client_applies_settings_queued_before_reattaching(pair):
     first, big, small = pair
-    first.intelligence(0)
+    first.model(intelligence=0)
     first.start()
     first.send("before")
     assert settled(first)
     assert first.provider == small
 
     second = Inference.load_or_create_session(first.session_id, [big])
-    second.intelligence(10)
+    second.model(intelligence=10)
     second.start()
     second.send("after")
     assert settled(second)

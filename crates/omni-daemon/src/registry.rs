@@ -463,6 +463,7 @@ fn missing(session_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use omni_core::choose::Ask;
     use super::*;
     use std::os::unix::net::UnixStream;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -505,7 +506,7 @@ mod tests {
                 || panic!("a warm session must not probe providers"),
                 vec![
                     Change::Providers(vec!["beta".into()]),
-                    Change::Intelligence(10),
+                    Change::Model(Ask::intelligence(10)),
                 ],
                 None,
                 conn,
@@ -517,7 +518,7 @@ mod tests {
         assert_eq!(again.listeners(), 1);
         assert!(wait_for(|| {
             let state = again.handle.snapshot();
-            state.providers == ["beta"] && state.intelligence == 10
+            state.providers == ["beta"] && state.ask == Ask::intelligence(10)
         }));
         registry.shutdown();
     }
@@ -534,16 +535,20 @@ mod tests {
             .open(
                 "s",
                 || names,
-                vec![Change::Intelligence(8), Change::Subagents(true)],
+                vec![Change::Model(Ask::intelligence(8)), Change::Subagents(true)],
                 None,
                 conn,
                 0,
             )
             .unwrap();
 
-        assert_eq!(live.handle.snapshot().intelligence, 8);
+        assert_eq!(live.handle.snapshot().ask, Ask::intelligence(8));
         let meta = Meta::open("s");
-        assert_eq!(meta.setting("level"), Some(&serde_json::json!(8)));
+        assert_eq!(
+            meta.setting("ask"),
+            Some(&serde_json::to_value(Ask::intelligence(8)).unwrap()),
+            "the ask is what is persisted, not a bare number"
+        );
         assert_eq!(meta.setting("subagents"), Some(&serde_json::json!(true)));
         let configured: Vec<String> = Store::open("s")
             .events(0)
@@ -551,7 +556,7 @@ mod tests {
             .filter(|event| event.is(omni_core::events::event_type::CONFIG))
             .map(|event| event.text)
             .collect();
-        assert!(configured.contains(&"intelligence".to_string()));
+        assert!(configured.contains(&"model".to_string()));
         assert!(configured.contains(&"subagents".to_string()));
         registry.shutdown();
     }
@@ -568,7 +573,7 @@ mod tests {
             .unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());
 
-        registry.set("s", Change::Intelligence(7)).unwrap();
+        registry.set("s", Change::Model(Ask::intelligence(7))).unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());
         registry.send("s", "durable").unwrap();
         assert!(registry.gates.lock().unwrap().is_empty());

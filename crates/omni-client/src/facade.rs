@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    Client, DaemonInfo, Error, Event, IntelligenceRung, LiveSession, OpenOptions, Result, Session,
+    Ask, Client, DaemonInfo, Error, Event, LiveSession, OpenOptions, Pick, Result, Session,
     Setting, Snapshot,
 };
 
@@ -18,8 +18,8 @@ use super::{
 pub struct ChatState {
     pub session: String,
     pub status: String,
-    #[serde(alias = "level")]
-    pub intelligence: i64,
+    /// What this chat was told to run: a key, a number, or a model by name.
+    pub ask: Ask,
     pub providers: Vec<String>,
     pub provider: String,
     pub model: String,
@@ -42,7 +42,7 @@ impl From<Snapshot> for ChatState {
         ChatState {
             session: snapshot.session,
             status: snapshot.status,
-            intelligence: snapshot.intelligence,
+            ask: snapshot.ask.clone(),
             providers: snapshot.providers,
             provider: snapshot.provider,
             model: snapshot.model,
@@ -124,7 +124,7 @@ impl Inference {
     }
 
     /// The cross-provider 0-10 intelligence dial.
-    pub fn dial(&self, providers: Option<Vec<String>>) -> Result<BTreeMap<i64, IntelligenceRung>> {
+    pub fn dial(&self, providers: Option<Vec<String>>) -> Result<BTreeMap<i64, Pick>> {
         self.client.dial(providers)
     }
 
@@ -294,9 +294,13 @@ impl Chat {
         self.change("providers", json!(providers))
     }
 
-    /// Set the shared 0-10 intelligence value.
-    pub fn intelligence(&mut self, intelligence: i64) -> Result<&mut Self> {
-        self.change("intelligence", json!(intelligence))
+    /// Say what should answer.
+    ///
+    /// One of three things: a key somebody curated, a number on the dial, or a
+    /// model by name. `Ask::key("code")`, `Ask::intelligence(7)`, or
+    /// `Ask::model("gemini-3.7-flash").from("google").effort("low")`.
+    pub fn model(&mut self, ask: Ask) -> Result<&mut Self> {
+        self.change("model", json!(ask))
     }
 
     pub fn system_prompt(&mut self, text: impl Into<String>) -> Result<&mut Self> {
@@ -553,7 +557,9 @@ impl Chat {
             .map_or("", |state| state.provider.as_str())
     }
 
-    pub fn model(&self) -> &str {
+    /// The model actually up right now, which is not always what was asked
+    /// for: a key resolves to different models as providers come and go.
+    pub fn running_model(&self) -> &str {
         self.state.as_ref().map_or("", |state| state.model.as_str())
     }
 
@@ -563,8 +569,9 @@ impl Chat {
             .map_or("", |state| state.effort.as_str())
     }
 
-    pub fn current_intelligence(&self) -> Option<i64> {
-        self.state.as_ref().map(|state| state.intelligence)
+    /// What this chat was last told to run, once the daemon has reported it.
+    pub fn current_ask(&self) -> Option<Ask> {
+        self.state.as_ref().map(|state| state.ask.clone())
     }
 
     pub fn listeners(&self) -> usize {
@@ -639,10 +646,7 @@ fn value_as<T: serde::de::DeserializeOwned>(operation: &str, value: Value) -> Re
         .map_err(|error| Error::Protocol(format!("bad {operation} reply from daemon: {error}")))
 }
 
-fn canonical_event(mut event: Event) -> Event {
-    if let Some(intelligence) = event.extra.remove("level") {
-        event.extra.entry("intelligence").or_insert(intelligence);
-    }
+fn canonical_event(event: Event) -> Event {
     event
 }
 
@@ -678,7 +682,7 @@ mod tests {
         Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            intelligence: 7,
+            ask: Ask::intelligence(7),
             providers: vec!["claude".into()],
             provider: "claude".into(),
             model: "sonnet".into(),
@@ -701,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn the_high_level_api_is_lazy_event_first_and_uses_intelligence() {
+    fn the_high_level_api_is_lazy_event_first_and_says_what_should_answer() {
         let (ours, theirs) = UnixStream::pair().unwrap();
         let client = Client::from_stream(ours).unwrap();
         let server = thread::spawn(move || {
@@ -717,7 +721,7 @@ mod tests {
             assert_eq!(
                 open.value,
                 json!([
-                    {"what": "intelligence", "value": 7},
+                    {"what": "model", "value": {"how": "intelligence", "value": 7}},
                     {"what": "mcp", "value": false},
                 ])
             );
@@ -774,13 +778,13 @@ mod tests {
             for_log.fetch_add(1, Ordering::SeqCst);
         });
 
-        chat.intelligence(7)
+        chat.model(Ask::intelligence(7))
             .unwrap()
             .disable_mcp()
             .unwrap()
             .start()
             .unwrap();
-        assert_eq!(chat.current_intelligence(), Some(7));
+        assert_eq!(chat.current_ask(), Some(Ask::intelligence(7)));
         assert_eq!(chat.effort(), "high");
         chat.send("hello").unwrap();
         let event = chat.next_event().unwrap().unwrap();
@@ -789,54 +793,38 @@ mod tests {
         assert_eq!(handled.load(Ordering::SeqCst), 1);
         assert_eq!(logged.load(Ordering::SeqCst), 1);
         let state = chat.refresh().unwrap();
-        assert_eq!(state.intelligence, 7);
-        assert_eq!(serde_json::to_value(state).unwrap()["intelligence"], 7);
+        assert_eq!(state.ask, Ask::intelligence(7));
+        assert_eq!(serde_json::to_value(state).unwrap()["ask"]["value"], 7);
         chat.detach().unwrap();
         server.join().unwrap();
     }
 
     #[test]
-    fn chat_state_serializes_intelligence_while_the_legacy_wire_key_survives() {
-        let raw = snapshot(3);
-        assert_eq!(raw.intelligence, 7);
-        let wire = serde_json::to_value(&raw).unwrap();
-        assert_eq!(wire["level"], 7);
-        assert!(wire.get("intelligence").is_none());
+    fn every_shape_of_ask_survives_the_wire() {
+        // A key, a number and a named model all have to come back as
+        // themselves, because the daemon stores whichever one was set and
+        // resolves it again on every launch.
+        for ask in [
+            Ask::key("code"),
+            Ask::intelligence(7),
+            Ask::intelligence(7).on("terminal-bench"),
+            Ask::model("gemini-3.7-flash").from("google").effort("low"),
+            Ask::model("gpt-5.6-luna").from("openai").effort("max").fast(true),
+        ] {
+            let wire = serde_json::to_value(&ask).unwrap();
+            let back: Ask = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(back, ask, "round trip of {wire}");
+        }
+    }
 
+    #[test]
+    fn a_state_carries_the_ask_it_was_given() {
+        let raw = snapshot(3);
+        assert_eq!(raw.ask, Ask::intelligence(7));
         let state = ChatState::from(raw);
         let public = serde_json::to_value(&state).unwrap();
-        assert_eq!(public["intelligence"], 7);
-        assert!(public.get("level").is_none());
-        let canonical_input: ChatState = serde_json::from_value(json!({
-            "session": "demo",
-            "status": "waiting",
-            "intelligence": 8,
-            "providers": [],
-            "provider": "",
-            "model": "",
-            "effort": "",
-            "cwd": "/tmp",
-            "seq": 0,
-            "in_turn": false,
-            "queued": 0,
-        }))
-        .unwrap();
-        assert_eq!(canonical_input.intelligence, 8);
-
-        let mut old_input = public;
-        let old_intelligence = old_input
-            .as_object_mut()
-            .unwrap()
-            .remove("intelligence")
-            .unwrap();
-        old_input["level"] = old_intelligence;
-        let from_old: ChatState = serde_json::from_value(old_input).unwrap();
-        assert_eq!(from_old.intelligence, 7);
-
-        let mut old_event = Event::config("intelligence");
-        old_event.extra.insert("level".into(), json!(7));
-        let event = canonical_event(old_event);
-        assert_eq!(event.extra["intelligence"], 7);
-        assert!(!event.extra.contains_key("level"));
+        assert_eq!(public["ask"]["how"], "intelligence");
+        assert_eq!(public["ask"]["value"], 7);
+        assert!(public.get("level").is_none(), "the 0.5 key is gone");
     }
 }

@@ -193,6 +193,7 @@ pub const OPS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
+    use crate::choose::Ask;
     use super::*;
     use crate::events::event_type;
 
@@ -200,7 +201,7 @@ mod tests {
         Snapshot {
             session: "demo".into(),
             status: "waiting".into(),
-            intelligence: 5,
+            ask: Ask::intelligence(5),
             providers: vec![],
             provider: String::new(),
             model: String::new(),

@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde_json::{Value, json};
 
 use crate::events::{CRASH, Event, event_type};
-use crate::intelligence::{Rung, key, write_cache};
+use crate::choose::{Ask, INTELLIGENCE_VALUES, Pick, pin as pin_answer};
 use crate::providers::base::{AUTHENTICATED, Account, Config, Delivery, Emit, Runner};
 use crate::translate::transcript;
 
@@ -393,44 +393,55 @@ impl Account for Signed {
 
 // ------------------------------------------------------------------ setting up
 
-pub fn rung(provider: &str, model: &str, effort: &str) -> Rung {
-    Rung::new(provider, model, effort)
+pub fn pick(provider: &str, model: &str, effort: &str) -> Pick {
+    Pick::new(provider, model, effort)
 }
 
-/// Spread rungs, best first, over levels 0-10 — the shape the registry serves.
+/// Deprecated spelling of [`pick`].
+pub fn rung(provider: &str, model: &str, effort: &str) -> Pick {
+    pick(provider, model, effort)
+}
+
+/// Pin one answer, for one question.
+pub fn pin(names: &[String], ask: &Ask, answer: &Pick) {
+    pin_answer(ask, names, answer, PINNED);
+}
+
+/// Picks spread best-first over 0-10, strongest at ten.
 ///
-/// A level that falls exactly between two rungs takes the weaker one, so the
-/// dial is monotonic and every level maps to something.
-pub fn dial(rungs: &[Rung]) -> Value {
-    if rungs.is_empty() {
-        return json!({});
+/// A value that falls exactly between two picks takes the weaker one, so the
+/// dial is monotonic and every value maps to something. Pure, so it can be
+/// tested without touching the cache every other test shares.
+pub fn spread_over(picks: &[Pick]) -> Vec<Pick> {
+    if picks.is_empty() {
+        return Vec::new();
     }
-    let steps = (rungs.len() - 1) as f64;
-    let mut out = serde_json::Map::new();
-    for level in 0..LEVELS {
-        let index = (((10 - level) as f64) * steps / 10.0).round() as usize;
-        out.insert(
-            level.to_string(),
-            serde_json::to_value(&rungs[index.min(rungs.len() - 1)]).unwrap_or(Value::Null),
-        );
-    }
-    Value::Object(out)
+    let steps = (picks.len() - 1) as f64;
+    (0..INTELLIGENCE_VALUES)
+        .map(|value| {
+            let index = (((10 - value) as f64) * steps / 10.0).round() as usize;
+            picks[index.min(picks.len() - 1)].clone()
+        })
+        .collect()
 }
 
-/// A whole dial on one provider, a different model at every level.
-pub fn spread(name: &str) -> Value {
-    let mut out = serde_json::Map::new();
-    for level in 0..LEVELS {
-        out.insert(
-            level.to_string(),
-            json!({"provider": name, "model": format!("{name}-model-{level}"), "effort": ""}),
-        );
-    }
-    Value::Object(out)
+/// One provider running a different model at every value.
+pub fn ramp(name: &str) -> Vec<Pick> {
+    (0..INTELLIGENCE_VALUES)
+        .map(|value| Pick::new(name, &format!("{name}-model-{value}"), ""))
+        .collect()
 }
 
-pub fn pin(names: &[String], levels: &Value) {
-    write_cache(&key(names), levels, PINNED);
+/// Pin a whole dial, so no value is ever asked over the network.
+pub fn dial(names: &[String], picks: &[Pick]) {
+    for (value, answer) in spread_over(picks).iter().enumerate() {
+        pin(names, &Ask::intelligence(value as i64), answer);
+    }
+}
+
+/// Pin one provider running a different model at every value.
+pub fn spread(names: &[String], name: &str) {
+    dial(names, &ramp(name));
 }
 
 /// Register test providers and pin dials for them, reaching no network.
@@ -438,7 +449,7 @@ pub fn pin(names: &[String], levels: &Value) {
 /// With no names you get one provider called `test`, running a different model
 /// at every level. Name several and the dial is spread over them, strongest
 /// first — pass `rungs` to say exactly which sits where.
-pub fn install(names: &[String], rungs: &[Rung]) -> Vec<String> {
+pub fn install(names: &[String], rungs: &[Pick]) -> Vec<String> {
     let picked: Vec<String> = if names.is_empty() {
         vec![NAME.to_string()]
     } else {
@@ -451,31 +462,31 @@ pub fn install(names: &[String], rungs: &[Rung]) -> Vec<String> {
         }
     }
     if !rungs.is_empty() {
-        pin(&picked, &dial(rungs));
+        dial(&picked, rungs);
     } else if picked.len() == 1 {
-        pin(&picked, &spread(&picked[0]));
+        spread(&picked, &picked[0]);
     } else {
-        let spread: Vec<Rung> = picked
+        let each: Vec<Pick> = picked
             .iter()
-            .map(|name| rung(name, &format!("{name}-model"), ""))
+            .map(|name| pick(name, &format!("{name}-model"), ""))
             .collect();
-        pin(&picked, &dial(&spread));
+        dial(&picked, &each);
     }
     // One dial per set of providers, the way a real registry serves them — so a
     // chat that loses one still resolves. Without these, testing a failover
-    // dead-ends at NoDial the moment the first provider is dropped.
+    // dead-ends at NoAnswer the moment the first provider is dropped.
     for name in &picked {
-        let mine: Vec<Rung> = rungs
+        let mine: Vec<Pick> = rungs
             .iter()
             .filter(|r| &r.provider == name)
             .cloned()
             .collect();
-        let levels = if mine.is_empty() {
-            spread(name)
+        let only = std::slice::from_ref(name);
+        if mine.is_empty() {
+            spread(only, name);
         } else {
-            dial(&mine)
-        };
-        pin(std::slice::from_ref(name), &levels);
+            dial(only, &mine);
+        }
     }
     picked
 }
@@ -533,24 +544,42 @@ mod tests {
     }
 
     #[test]
-    fn the_strongest_rung_is_at_the_top_of_the_dial() {
-        let levels = dial(&[rung("beta", "big", "high"), rung("alpha", "small", "low")]);
-        assert_eq!(levels["10"]["provider"], "beta");
-        assert_eq!(levels["0"]["provider"], "alpha");
+    fn the_strongest_pick_is_at_the_top_of_the_dial() {
+        let over = spread_over(&[pick("beta", "big", "high"), pick("alpha", "small", "low")]);
+        assert_eq!(over[10].provider, "beta");
+        assert_eq!(over[0].provider, "alpha");
     }
 
     #[test]
-    fn one_rung_fills_the_whole_dial() {
-        let levels = dial(&[rung("solo", "only", "")]);
-        for level in 0..LEVELS {
-            assert_eq!(levels[level.to_string()]["model"], "only");
+    fn one_pick_fills_the_whole_dial() {
+        let over = spread_over(&[pick("solo", "only", "")]);
+        assert_eq!(over.len(), INTELLIGENCE_VALUES as usize);
+        assert!(over.iter().all(|p| p.model == "only"));
+    }
+
+    #[test]
+    fn a_dial_never_climbs_as_the_value_falls() {
+        // three picks over eleven values: every step down must stay put or get
+        // weaker, never stronger
+        let over = spread_over(&[
+            pick("a", "best", ""),
+            pick("b", "middling", ""),
+            pick("c", "least", ""),
+        ]);
+        let rank = |m: &str| match m {
+            "best" => 2,
+            "middling" => 1,
+            _ => 0,
+        };
+        for pair in over.windows(2) {
+            assert!(rank(&pair[0].model) <= rank(&pair[1].model), "{pair:?}");
         }
     }
 
     #[test]
-    fn a_spread_gives_every_level_its_own_model() {
-        let levels = spread("x");
-        assert_eq!(levels["0"]["model"], "x-model-0");
-        assert_eq!(levels["10"]["model"], "x-model-10");
+    fn a_ramp_gives_every_value_its_own_model() {
+        let over = ramp("x");
+        assert_eq!(over[0].model, "x-model-0");
+        assert_eq!(over[10].model, "x-model-10");
     }
 }

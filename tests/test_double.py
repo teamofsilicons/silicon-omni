@@ -29,11 +29,11 @@ def test_a_tool_marker_runs_a_tool(one, name):
 
 def test_recall_answers_out_of_history_it_was_only_seeded_with(pair):
     chat, big, small = pair
-    chat.intelligence(0)
+    chat.model(intelligence=0)
     chat.start()
     chat.send("the passphrase is VIOLET-7")
     assert settled(chat)
-    chat.intelligence(10)
+    chat.model(intelligence=10)
     chat.send("[recall]")
     assert settled(chat)
     assert "VIOLET-7" in [e.text for e in chat.history() if e.type == Event.TEXT][-1]
