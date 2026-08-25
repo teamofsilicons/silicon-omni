@@ -22,7 +22,7 @@ from .client import DaemonError
 from .events import Event
 from .inference import Inference, NoAnswer
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 
 
 class SessionBusy(RuntimeError):
