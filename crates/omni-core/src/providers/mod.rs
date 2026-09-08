@@ -31,6 +31,22 @@ pub fn names() -> Vec<String> {
 }
 
 /// The shared account handle for a provider — auth, limits, install state.
+/// Can this provider change its system prompt on a session it already opened?
+///
+/// Claude gets `--system-prompt` on a fresh process every launch, and agy
+/// re-seeds its opening, so both take a new prompt on the next turn. Codex does
+/// not: `baseInstructions` and `developerInstructions` are fixed when a thread
+/// is created, and `thread/resume` drops them. Its own app-server says so —
+/// "baseInstructions override was provided and ignored while running" — and a
+/// thread resumed with eight facts in its prompt will still recite the five it
+/// was born with.
+///
+/// Anything answering false here has to be given a new native session when the
+/// prompt changes, or the change is silently lost.
+pub fn retunes_instructions(name: &str) -> bool {
+    name != openai::NAME
+}
+
 pub fn account(name: &str) -> Option<Arc<dyn Account>> {
     match name {
         "claude" => Some(Arc::new(claude::Claude)),

@@ -1090,6 +1090,14 @@ impl Chat {
 
     // ---------------------------------------------------------------- runners
 
+    /// Has the system prompt moved since this runner was brought up?
+    fn prompts_moved(&self) -> bool {
+        self.current.as_ref().is_some_and(|(_, _, _, was)| {
+            was.system_prompt != self.config.system_prompt
+                || was.append_system_prompt != self.config.append_system_prompt
+        })
+    }
+
     fn rung(&self) -> Result<Pick, String> {
         resolve(&self.ask, &self.providers).map_err(|err| err.to_string())
     }
@@ -1198,6 +1206,36 @@ impl Chat {
         let name = runner.name().to_string();
         let epoch = self.runner_epoch.take();
         let native = runner.native_id();
+
+        /* A provider that fixes its instructions when a session is opened
+           cannot be handed a changed prompt: codex drops the override and goes
+           on answering from the prompt its thread was born with. So the thread
+           is let go rather than remembered, and the next launch opens a fresh
+           one carrying the new text. The sync mark goes back with it, because
+           the replacement has to be told the whole conversation — leaving the
+           mark where it was would hand it an empty history. */
+        if !native.is_empty() && !providers::retunes_instructions(&name) && self.prompts_moved() {
+            runner.stop();
+            let bound = self.meta.bind(&name, "");
+            let marked = self.meta.mark_synced(&name, -1);
+            if bound.is_err() || marked.is_err() {
+                self.persistence_failed(
+                    "releasing a provider session whose prompt changed",
+                    &bound.err().or(marked.err()).expect("one of them failed"),
+                );
+                return false;
+            }
+            self.parked.remove(&name);
+            return self
+                .record(
+                    Event::config("reopening")
+                        .from(&name)
+                        .with("was", native)
+                        .with("why", "its system prompt is fixed when the session is opened"),
+                )
+                .is_some();
+        }
+
         if !native.is_empty() {
             if let Err(error) = self.meta.bind(&name, &native) {
                 runner.stop();

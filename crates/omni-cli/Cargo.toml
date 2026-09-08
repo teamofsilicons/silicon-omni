@@ -17,6 +17,13 @@ path = "src/bin/silicon-omni.rs"
 name = "so"
 path = "src/bin/so.rs"
 
+# Back after 0.5 retired it, because `omni web` is the name of the thing it
+# starts. All three are the same client; this one is what a browser pairs with.
+[[bin]]
+name = "omni"
+path = "src/bin/omni.rs"
+
 [dependencies]
 silicon-omni.workspace = true
+omni-web.workspace = true
 serde_json.workspace = true

@@ -188,6 +188,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-web"
+version = "0.7.0"
+dependencies = [
+ "omni-core",
+ "serde",
+ "serde_json",
+ "signal-hook",
+ "silicon-omni",
+ "uuid",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -373,6 +385,7 @@ dependencies = [
 name = "silicon-omni-cli"
 version = "0.7.0"
 dependencies = [
+ "omni-web",
  "serde_json",
  "silicon-omni",
 ]

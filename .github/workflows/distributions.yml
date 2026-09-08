@@ -150,9 +150,12 @@ jobs:
               "crates/omni-cli/src/lib.rs",
               "crates/omni-cli/src/bin/silicon-omni.rs",
               "crates/omni-cli/src/bin/so.rs",
+              "crates/omni-cli/src/bin/omni.rs",
               "crates/omni-client/Cargo.toml",
               "crates/omni-core/Cargo.toml",
               "crates/omni-daemon/Cargo.toml",
+              "crates/omni-web/Cargo.toml",
+              "crates/omni-web/src/lib.rs",
           }
           present = {name.removeprefix(f"{root}/") for name in names}
           missing = required - present

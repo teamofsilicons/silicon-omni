@@ -5,6 +5,7 @@ members = [
     "crates/omni-daemon",
     "crates/omni-client",
     "crates/omni-cli",
+    "crates/omni-web",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ readme = "README.md"
 [workspace.dependencies]
 omni-core = { path = "crates/omni-core", version = "0.7.0" }
 silicon-omni = { path = "crates/omni-client", version = "0.7.0" }
+omni-web = { path = "crates/omni-web", version = "0.7.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"

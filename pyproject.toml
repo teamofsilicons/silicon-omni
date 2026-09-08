@@ -30,6 +30,7 @@ dependencies = []
 [project.scripts]
 silicon-omni = "omni.cli:main"
 so = "omni.cli:short"
+omni = "omni.cli:omni"
 
 [project.urls]
 Homepage = "https://omni.teamofsilicons.com"
