@@ -72,11 +72,11 @@ class ProviderHandle:
 
 class Inference:
     #: Anthropic, through the ``claude`` CLI.
-    claude = ProviderHandle("claude")
+    claude = ProviderHandle("claude-code-cli")
     #: OpenAI, through ``codex app-server``.
-    openai = ProviderHandle("openai")
+    openai = ProviderHandle("codex-app-server")
     #: Google, through Antigravity's ``agy``.
-    google = ProviderHandle("google")
+    google = ProviderHandle("antigravity-cli")
 
     @staticmethod
     def get_available_providers(limit_to: Sequence[str] | None = None) -> list[str]:

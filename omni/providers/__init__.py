@@ -9,7 +9,7 @@ from . import test
 
 #: The providers built into omni. A test double registered by
 #: :func:`omni.providers.test.install` appears alongside these.
-BUILT_IN = ("claude", "openai", "google")
+BUILT_IN = ("claude-code-cli", "codex-app-server", "antigravity-cli")
 
 
 def available(limit_to=None) -> list[str]:

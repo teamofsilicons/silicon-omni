@@ -93,13 +93,13 @@ def test_python_sends_the_ask_in_every_shape(
     chat.model("code")
     assert link.requests[-1][1]["value"] == {"how": "key", "key": "code"}
 
-    chat.model(model="gemini-3.7-flash-low", provider="google", effort="", fast=True)
+    chat.model(model="gemini-3.8-flash-low", provider="antigravity-cli", effort="", fast=True)
     assert link.requests[-1][1]["value"] == {
         "how": "model",
-        "model": "gemini-3.7-flash-low",
+        "model": "gemini-3.8-flash-low",
         "effort": "",
         "fast": True,
-        "provider": "google",
+        "provider": "antigravity-cli",
     }
 
     for bad in ({}, {"key": "code", "intelligence": 4}):

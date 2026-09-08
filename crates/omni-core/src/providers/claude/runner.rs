@@ -64,7 +64,7 @@ impl Runner {
 
     fn argv(&self, resume: bool) -> Vec<String> {
         let mut argv: Vec<String> = [
-            "claude",
+            "claude-code-cli",
             "-p",
             "--output-format",
             "stream-json",

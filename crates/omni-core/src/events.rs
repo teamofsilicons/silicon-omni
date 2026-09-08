@@ -324,12 +324,12 @@ mod tests {
     #[test]
     fn a_round_trip_keeps_every_field() {
         let event = Event::failure(AUTH, "logged out")
-            .from("claude")
+            .from("claude-code-cli")
             .about("some-model")
             .with("left", 2);
         let back: Event = serde_json::from_value(event.to_value()).unwrap();
         assert_eq!(back.kind, AUTH);
-        assert_eq!(back.provider, "claude");
+        assert_eq!(back.provider, "claude-code-cli");
         assert_eq!(back.model, "some-model");
         assert_eq!(back.extra["left"], 2);
         assert_eq!(back.v, SCHEMA_VERSION);

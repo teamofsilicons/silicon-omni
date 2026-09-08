@@ -24,7 +24,7 @@ even the rust client connects via the client to the deamon. its to be treated th
 ```python
 from omni import Inference, Event
 
-PROVIDERS = Inference.get_available_providers() # list["claude", "google", "openai"], can be defined manually to limit providers available
+PROVIDERS = Inference.get_available_providers() # list["claude-code-cli", "antigravity-cli", "codex-app-server"], can be defined manually to limit providers available
 
 chat = Inference.load_or_create_session("session_id")
 chat.active_inference_providers(PROVIDERS)
@@ -179,18 +179,18 @@ Store things inside a .jsonl file and keep it the json. this is the source of tr
 Providers & Intelligence
 providers does 2 things. check if the cli is installed, and then checks which ones are active (authenticated).
 
-chat.model(...) can take 3 kinds of things. either 0-10 intelligence score we have, or straight up model names and effort (model="gemini-3.7-flash", effort="low", fast=false}), or special keyword
+chat.model(...) can take 3 kinds of things. either 0-10 intelligence score we have, or straight up model names and effort (model="gemini-3.8-flash", effort="low", fast=false}), or special keyword
 
 oh, and codex and claude support a /fast for their models. false by default. but can be passed as true. make sure there is a way to do that. research on how its done. google does not have fast, so its ignored.
 
 key based model selection:
 best one per provider we have, ranked from left to right.
-"fast": [gpt-5.6-luna-max-fast, gemini-3.7-flash-low, claude-opus-5-low-fast]
-"code": [gpt-5.6-sol-max, claude-opus-5-max, gemini-3.7-flash-high]
-"design": [claude-opus-5-max, gpt-5.6-sol-max, gemini-3.7-flash-high]
-"research": [gpt-5.6-sol-max, claude-opus-5-max, gemini-3.7-flash-high]
-"cost": [gpt-5.6-luna-low, gemini-3.7-flash-low, claude-opus-5-low]
-"general": [gpt-5.6-sol-xhigh, claude-opus-5-medium, gemini-3.7-flash-high]
+"fast": [gpt-6-astra-max-fast, gemini-3.8-flash-low, claude-opus-5-low-fast]
+"code": [gpt-6-astra-max, claude-opus-5-max, gemini-3.8-flash-high]
+"design": [claude-opus-5-max, gpt-6-astra-max, gemini-3.8-flash-high]
+"research": [gpt-6-astra-max, claude-opus-5-max, gemini-3.8-flash-high]
+"cost": [gpt-6-astra-low, gemini-3.8-flash-low, claude-opus-5-low]
+"general": [gpt-6-astra-xhigh, claude-opus-5-medium, gemini-3.8-flash-high]
 
 the dict you give for model and effort should not be maintained as a local dict. it should be directly pluggable into the model switcher. this is done so that when a new model is launched, the slug can be changed on the remote, and it will be implemeted everywhere. programatic changes to model name or effort is ok but it should require no upkeep when new models drop. follow the same pattern that proviers use right now.
 

@@ -38,7 +38,7 @@ def test_the_failure_kinds_are_pinned():
 
 def test_events_round_trip_through_the_session_file():
     event = Event(
-        type=Event.TOOL.CALL, tool="Bash", args={"command": "ls"}, id="t1", provider="claude"
+        type=Event.TOOL.CALL, tool="Bash", args={"command": "ls"}, id="t1", provider="claude-code-cli"
     )
     assert Event.from_dict(event.to_dict()) == event
 

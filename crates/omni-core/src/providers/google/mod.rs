@@ -13,5 +13,5 @@ pub use account::Antigravity;
 pub use runner::Runner;
 pub use stream::Stream;
 
-pub const NAME: &str = "google";
+pub const NAME: &str = "antigravity-cli";
 pub const CLI: &str = "agy";

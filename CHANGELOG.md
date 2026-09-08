@@ -7,7 +7,7 @@ of them.** A word — `chat.model("code")` — is a shortlist somebody chose, be
 first, and the first vendor on it you are signed into answers. A number —
 `chat.model(intelligence=7)` — is the dial, still the left edge of a board where
 a model earns a rung when nothing else is both better and cheaper. A model —
-`chat.model(model="gemini-3.7-flash-low", provider="google")` — is you already
+`chat.model(model="gemini-3.8-flash-low", provider="antigravity-cli")` — is you already
 knowing, passed to the CLI verbatim and resolved on the machine with no network
 at all. Saying two of them in one call is refused rather than resolved by
 precedence.

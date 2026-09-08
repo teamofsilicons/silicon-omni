@@ -83,7 +83,7 @@ def skip_if_limited(chat, provider):
         pytest.skip(f"{provider} has no live inference quota: {failures[-1].error}")
 
 
-@pytest.fixture(params=["claude", "openai", "google"])
+@pytest.fixture(params=["claude-code-cli", "codex-app-server", "antigravity-cli"])
 def provider(request):
     if request.param not in Inference.get_available_providers():
         pytest.skip(f"{request.param} is not installed or not logged in")
@@ -124,7 +124,7 @@ def test_auth_and_limits_answer_without_a_turn(provider):
 
 def test_a_conversation_survives_moving_between_providers():
     available = Inference.get_available_providers()
-    have = [p for p in ("google", "claude", "openai") if p in available and has_quota(p)]
+    have = [p for p in ("antigravity-cli", "claude-code-cli", "codex-app-server") if p in available and has_quota(p)]
     if len(have) < 2:
         pytest.skip("needs two providers with live inference quota to switch between")
     first, second = have[0], have[1]

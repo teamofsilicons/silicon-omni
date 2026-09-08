@@ -43,33 +43,33 @@ SCHEMA = "silicon-omni.grouped-live/v1"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 PROVIDER_LABELS = {
-    "claude": "Claude",
-    "openai": "Codex",
-    "google": "Agy",
+    "claude-code-cli": "Claude",
+    "codex-app-server": "Codex",
+    "antigravity-cli": "Agy",
 }
 
 DEFAULT_MODELS = {
-    "claude": {"model": "claude-haiku-4-5-20251001", "effort": ""},
-    "openai": {"model": "gpt-5.6-luna", "effort": "low"},
-    "google": {"model": "gemini-3.7-flash-low", "effort": ""},
+    "claude-code-cli": {"model": "claude-haiku-4-5-20251001", "effort": ""},
+    "codex-app-server": {"model": "gpt-6-astra", "effort": "low"},
+    "antigravity-cli": {"model": "gemini-3.8-flash-low", "effort": ""},
 }
 
 FACTS_BY_PROVIDER = {
-    "claude": [
+    "claude-code-cli": [
         "C01-731482",
         "C02-284617",
         "C03-956843",
         "C04-358426",
         "C05-619275",
     ],
-    "openai": [
+    "codex-app-server": [
         "O01-482965",
         "O02-617358",
         "O03-843731",
         "O04-426284",
         "O05-275956",
     ],
-    "google": [
+    "antigravity-cli": [
         "G01-965619",
         "G02-358482",
         "G03-731617",
@@ -422,16 +422,16 @@ def classify_command(command: str) -> str:
     if any(base == "omnid" for base in bases) or re.search(r"(?:^|/)omnid(?:\s|$)", lowered):
         return "daemon"
     if re.search(r"(?:^|[/\s])codex\s+app-server(?:\s|$)", lowered):
-        return "openai"
+        return "codex-app-server"
     if (
-        any(base == "claude" for base in bases)
+        any(base == "claude-code-cli" for base in bases)
         or re.search(r"(?:^|[/\s])claude(?:\s|$)", lowered)
         or "@anthropic-ai/claude-code" in lowered
         or "/claude-code/" in lowered
     ):
-        return "claude"
+        return "claude-code-cli"
     if any(base == "agy" for base in bases) or re.search(r"(?:^|[/\s])agy(?:\s|$)", lowered):
-        return "google"
+        return "antigravity-cli"
     return ""
 
 
@@ -515,9 +515,9 @@ class ProcessTracker:
             pid: classify_command(row["command"]) for pid, row in scoped.items()
         }
         grouped: dict[str, list[dict[str, Any]]] = {
-            "claude": [],
-            "openai": [],
-            "google": [],
+            "claude-code-cli": [],
+            "codex-app-server": [],
+            "antigravity-cli": [],
             "daemon": [],
         }
         for pid, kind in classified.items():
@@ -618,15 +618,15 @@ class ProcessTracker:
 def all_facts() -> list[str]:
     return [
         fact
-        for provider in ("claude", "openai", "google")
+        for provider in ("claude-code-cli", "codex-app-server", "antigravity-cli")
         for fact in FACTS_BY_PROVIDER[provider]
     ]
 
 
 def workload() -> list[TurnSpec]:
     turns: list[TurnSpec] = []
-    prefixes = {"claude": "C", "openai": "O", "google": "G"}
-    for provider in ("claude", "openai", "google"):
+    prefixes = {"claude-code-cli": "C", "codex-app-server": "O", "antigravity-cli": "G"}
+    for provider in ("claude-code-cli", "codex-app-server", "antigravity-cli"):
         for index, fact in enumerate(FACTS_BY_PROVIDER[provider], start=1):
             turns.append(
                 TurnSpec(
@@ -640,7 +640,7 @@ def workload() -> list[TurnSpec]:
     turns.append(
         TurnSpec(
             label="RECALL",
-            provider="claude",
+            provider="claude-code-cli",
             group_index=1,
             prompt=RECALL_PROMPT,
             recall=True,
@@ -651,9 +651,9 @@ def workload() -> list[TurnSpec]:
 
 def models_from_args(args: argparse.Namespace) -> dict[str, dict[str, str]]:
     return {
-        "claude": {"model": args.claude_model, "effort": args.claude_effort},
-        "openai": {"model": args.codex_model, "effort": args.codex_effort},
-        "google": {"model": args.agy_model, "effort": args.agy_effort},
+        "claude-code-cli": {"model": args.claude_model, "effort": args.claude_effort},
+        "codex-app-server": {"model": args.codex_model, "effort": args.codex_effort},
+        "antigravity-cli": {"model": args.agy_model, "effort": args.agy_effort},
     }
 
 
@@ -661,7 +661,7 @@ def benchmark_plan(args: argparse.Namespace) -> dict[str, Any]:
     facts = all_facts()
     expected = json.dumps(facts, separators=(",", ":"))
     return {
-        "providers": ["claude", "openai", "google", "claude"],
+        "providers": ["claude-code-cli", "codex-app-server", "antigravity-cli", "claude-code-cli"],
         "facts": facts,
         "expected_recall": expected,
         "models": models_from_args(args),
@@ -1093,7 +1093,7 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
         "each_fact_once": all(recall_text.count(fact) == 1 for fact in facts),
     }
     groups = []
-    for provider in ("claude", "openai", "google"):
+    for provider in ("claude-code-cli", "codex-app-server", "antigravity-cli"):
         groups.append(group_summary(provider, [turn for turn in teaching if turn["provider"] == provider]))
 
     provider_processes_observed = all(
@@ -1156,7 +1156,7 @@ def summarize(result: dict[str, Any]) -> dict[str, Any]:
     }
     overall["pass"] = all(overall.values())
     initial_claude = next(
-        (turn for turn in teaching if turn["provider"] == "claude"),
+        (turn for turn in teaching if turn["provider"] == "claude-code-cli"),
         {"native": {"known_after_turn": {}}, "processes": {"provider_pids_after": []}},
     )
     initial_native = initial_claude["native"]["known_after_turn"]
@@ -1296,12 +1296,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=50,
         help="post-idle observation grace before the process snapshot",
     )
-    parser.add_argument("--claude-model", default=DEFAULT_MODELS["claude"]["model"])
-    parser.add_argument("--claude-effort", default=DEFAULT_MODELS["claude"]["effort"])
-    parser.add_argument("--codex-model", default=DEFAULT_MODELS["openai"]["model"])
-    parser.add_argument("--codex-effort", default=DEFAULT_MODELS["openai"]["effort"])
-    parser.add_argument("--agy-model", default=DEFAULT_MODELS["google"]["model"])
-    parser.add_argument("--agy-effort", default=DEFAULT_MODELS["google"]["effort"])
+    parser.add_argument("--claude-model", default=DEFAULT_MODELS["claude-code-cli"]["model"])
+    parser.add_argument("--claude-effort", default=DEFAULT_MODELS["claude-code-cli"]["effort"])
+    parser.add_argument("--codex-model", default=DEFAULT_MODELS["codex-app-server"]["model"])
+    parser.add_argument("--codex-effort", default=DEFAULT_MODELS["codex-app-server"]["effort"])
+    parser.add_argument("--agy-model", default=DEFAULT_MODELS["antigravity-cli"]["model"])
+    parser.add_argument("--agy-effort", default=DEFAULT_MODELS["antigravity-cli"]["effort"])
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -1376,7 +1376,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         result["module"] = module_info
         result["setup"]["import_ms"] = ms_between(import_begin, import_end)
 
-        cli_paths = {name: shutil.which(name) for name in ("claude", "codex", "agy")}
+        cli_paths = {name: shutil.which(name) for name in ("claude-code-cli", "codex", "agy")}
         result["setup"]["cli_paths"] = cli_paths
         if not args.skip_cli_check:
             missing = [name for name, path in cli_paths.items() if not path]
@@ -1387,7 +1387,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             preflight_begin = time.perf_counter_ns()
             if architecture == "daemon":
                 daemon_may_have_started = True
-            available = Inference.get_available_providers(["claude", "openai", "google"])
+            available = Inference.get_available_providers(["claude-code-cli", "codex-app-server", "antigravity-cli"])
             preflight_end = time.perf_counter_ns()
             result["setup"]["preflight"] = {
                 "duration_ms": ms_between(preflight_begin, preflight_end),
@@ -1401,7 +1401,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
 
         # Positional provider argument works with both 0.3's ``providers_`` and
         # the daemon client's later ``providers`` spelling.
-        chat = Inference.load_or_create_session(session_id, ["claude"])
+        chat = Inference.load_or_create_session(session_id, ["claude-code-cli"])
         chat.intelligence(0)
         chat.disable_subagents()
         chat.disable_mcp()
@@ -1431,7 +1431,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         )
         processes.mark("chat:started_and_idle")
 
-        active_provider = "claude"
+        active_provider = "claude-code-cli"
         for index, spec in enumerate(workload()):
             turn, active_provider, turn_failure = run_turn(
                 chat,

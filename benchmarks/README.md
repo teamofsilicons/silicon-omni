@@ -71,8 +71,8 @@ The default frozen models are:
 | Provider | Model | Effort |
 | --- | --- | --- |
 | Claude | `claude-haiku-4-5-20251001` | empty |
-| Codex | `gpt-5.6-luna` | `low` |
-| Agy | `gemini-3.7-flash-low` | empty |
+| Codex | `gpt-6-astra` | `low` |
+| Agy | `gemini-3.8-flash-low` | empty |
 
 Override them explicitly if any CLI no longer accepts one, and use the exact
 same overrides in every comparison trial.

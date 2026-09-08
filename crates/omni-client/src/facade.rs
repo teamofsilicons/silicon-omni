@@ -111,9 +111,9 @@ impl Inference {
     /// Wrap an existing raw client. Useful for custom discovery and tests.
     pub fn from_client(client: Client) -> Self {
         Inference {
-            claude: ProviderHandle::new(client.clone(), "claude"),
-            openai: ProviderHandle::new(client.clone(), "openai"),
-            google: ProviderHandle::new(client.clone(), "google"),
+            claude: ProviderHandle::new(client.clone(), "claude-code-cli"),
+            openai: ProviderHandle::new(client.clone(), "codex-app-server"),
+            google: ProviderHandle::new(client.clone(), "antigravity-cli"),
             client,
         }
     }
@@ -298,7 +298,7 @@ impl Chat {
     ///
     /// One of three things: a key somebody curated, a number on the dial, or a
     /// model by name. `Ask::key("code")`, `Ask::intelligence(7)`, or
-    /// `Ask::model("gemini-3.7-flash").from("google").effort("low")`.
+    /// `Ask::model("gemini-3.8-flash").from("antigravity-cli").effort("low")`.
     pub fn model(&mut self, ask: Ask) -> Result<&mut Self> {
         self.change("model", json!(ask))
     }
@@ -683,8 +683,8 @@ mod tests {
             session: "demo".into(),
             status: "waiting".into(),
             ask: Ask::intelligence(7),
-            providers: vec!["claude".into()],
-            provider: "claude".into(),
+            providers: vec!["claude-code-cli".into()],
+            provider: "claude-code-cli".into(),
             model: "sonnet".into(),
             effort: "high".into(),
             cwd: "/tmp".into(),
@@ -716,7 +716,7 @@ mod tests {
             let open = read_request(&mut lines);
             assert_eq!(open.op, "open");
             assert_eq!(open.session.as_deref(), Some("demo"));
-            assert_eq!(open.providers, Some(vec!["claude".to_string()]));
+            assert_eq!(open.providers, Some(vec!["claude-code-cli".to_string()]));
             assert_eq!(open.from, Some(0));
             assert_eq!(
                 open.value,
@@ -744,7 +744,7 @@ mod tests {
             send_json(&mut writing, &Reply::ok(send.id, json!({"accepted": true})));
             let mut event = Event::new(Event::TEXT).saying("world");
             event.session = "demo".into();
-            event.provider = "claude".into();
+            event.provider = "claude-code-cli".into();
             event.seq = 1;
             send_json(&mut writing, &Frame::event("demo", event, snapshot(1)));
 
@@ -764,7 +764,7 @@ mod tests {
         });
 
         let inference = Inference::from_client(client);
-        let mut chat = inference.load_or_create_session("demo", Some(vec!["claude".into()]));
+        let mut chat = inference.load_or_create_session("demo", Some(vec!["claude-code-cli".into()]));
         let handled = Arc::new(AtomicUsize::new(0));
         let for_handler = Arc::clone(&handled);
         chat.on_event(move |event| {
@@ -808,8 +808,8 @@ mod tests {
             Ask::key("code"),
             Ask::intelligence(7),
             Ask::intelligence(7).on("terminal-bench"),
-            Ask::model("gemini-3.7-flash").from("google").effort("low"),
-            Ask::model("gpt-5.6-luna").from("openai").effort("max").fast(true),
+            Ask::model("gemini-3.8-flash").from("antigravity-cli").effort("low"),
+            Ask::model("gpt-6-astra").from("codex-app-server").effort("max").fast(true),
         ] {
             let wire = serde_json::to_value(&ask).unwrap();
             let back: Ask = serde_json::from_value(wire.clone()).unwrap();

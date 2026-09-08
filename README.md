@@ -60,7 +60,7 @@ Zero runtime dependencies. You bring the CLIs:
 | `google` | Antigravity | `agy models` |
 
 ```python
-Inference.get_available_providers()   # ['claude', 'google', 'openai']
+Inference.get_available_providers()   # ['claude-code-cli', 'antigravity-cli', 'codex-app-server']
 ```
 
 Installed *and* logged in. Anything else is not offered.
@@ -143,8 +143,8 @@ exactly one of them per call.
 ```python
 chat.model("code")                                    # a word
 chat.model(intelligence=7)                            # a number
-chat.model(model="gemini-3.7-flash-low",              # a model
-           provider="google", fast=False)
+chat.model(model="gemini-3.8-flash-low",              # a model
+           provider="antigravity-cli", fast=False)
 ```
 
 **A word** is a shortlist somebody chose, best first, and the first vendor on it
@@ -319,7 +319,7 @@ This is the rule the whole design hangs off.
 
 ```python
 chat.model("research")            # noted now
-chat.active_inference_providers(["claude", "openai"])
+chat.active_inference_providers(["claude-code-cli", "codex-app-server"])
 chat.system_prompt("...")
 chat.enable_subagents()
 ```
@@ -418,10 +418,10 @@ provider's **own** session and how far up the omni log it has already seen:
 
 ```json
 {"pending": [{"id": "8f91…", "text": "accepted, not delivered yet"}],
- "providers": {"claude": {"id": "3cb0…", "synced": 19},
-               "google": {"id": "1dbc…", "synced": 26}},
+ "providers": {"claude-code-cli": {"id": "3cb0…", "synced": 19},
+               "antigravity-cli": {"id": "1dbc…", "synced": 26}},
  "settings": {"cwd": "/work/nightly", "level": 7,
-              "active_providers": ["claude", "google"]}}
+              "active_providers": ["claude-code-cli", "antigravity-cli"]}}
 ```
 
 This is the internal version-1 metadata shape, so it retains the key `level` for

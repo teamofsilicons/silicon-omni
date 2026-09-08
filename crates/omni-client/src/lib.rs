@@ -15,7 +15,7 @@
 //! let mut chat = inference.load_or_create_session("demo", None);
 //! chat.model(Ask::key("code"))?.start()?;
 //! // or Ask::intelligence(7)
-//! // or Ask::model("gemini-3.7-flash-low").from("google")
+//! // or Ask::model("gemini-3.8-flash-low").from("antigravity-cli")
 //! chat.send("hello")?;
 //!
 //! for event in chat.events() {

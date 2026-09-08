@@ -151,7 +151,7 @@ class Chat:
             when nothing else is both better *and* cheaper. ``bench`` picks the
             board.
 
-        ``chat.model(model="gemini-3.7-flash-low", provider="google")``
+        ``chat.model(model="gemini-3.8-flash-low", provider="antigravity-cli")``
             You already know. The name goes to the CLI verbatim, so a model
             released this morning works without omni knowing about it.
             ``fast`` asks for the CLI's faster tier where it has one, and is

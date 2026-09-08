@@ -381,25 +381,25 @@ mod tests {
     #[test]
     fn a_provider_starts_unknown_and_unsynced() {
         let _home = scratch_home("meta-fresh");
-        assert_eq!(Meta::open("s").native("claude"), (String::new(), -1));
+        assert_eq!(Meta::open("s").native("claude-code-cli"), (String::new(), -1));
     }
 
     #[test]
     fn what_was_bound_survives_a_reopen() {
         let _home = scratch_home("meta-bind");
         let mut meta = Meta::open("s");
-        meta.bind("claude", "uuid-1").unwrap();
-        meta.mark_synced("claude", 7).unwrap();
+        meta.bind("claude-code-cli", "uuid-1").unwrap();
+        meta.mark_synced("claude-code-cli", 7).unwrap();
         meta.set("cwd", json!("/tmp")).unwrap();
-        meta.set_setting("active_providers", json!(["google"]))
+        meta.set_setting("active_providers", json!(["antigravity-cli"]))
             .unwrap();
         let back = Meta::open("s");
-        assert_eq!(back.native("claude"), ("uuid-1".into(), 7));
+        assert_eq!(back.native("claude-code-cli"), ("uuid-1".into(), 7));
         assert_eq!(back.get_str("cwd").as_deref(), Some("/tmp"));
-        assert_eq!(back.setting("active_providers"), Some(&json!(["google"])));
+        assert_eq!(back.setting("active_providers"), Some(&json!(["antigravity-cli"])));
         let raw: Value = serde_json::from_str(&fs::read_to_string(back.path).unwrap()).unwrap();
-        assert_eq!(raw["providers"]["claude"]["id"], "uuid-1");
-        assert_eq!(raw["settings"]["active_providers"], json!(["google"]));
+        assert_eq!(raw["providers"]["claude-code-cli"]["id"], "uuid-1");
+        assert_eq!(raw["settings"]["active_providers"], json!(["antigravity-cli"]));
     }
 
     #[test]
@@ -410,8 +410,8 @@ mod tests {
         std::fs::write(&path, "{not json at all").unwrap();
         let mut meta = Meta::open("s");
         assert!(meta.load_error().is_some());
-        assert_eq!(meta.native("claude"), (String::new(), -1));
-        assert!(meta.bind("claude", "uuid-2").is_err());
+        assert_eq!(meta.native("claude-code-cli"), (String::new(), -1));
+        assert!(meta.bind("claude-code-cli", "uuid-2").is_err());
         assert_eq!(std::fs::read_to_string(path).unwrap(), "{not json at all");
     }
 
@@ -421,7 +421,7 @@ mod tests {
         std::fs::create_dir_all(paths::sessions()).unwrap();
         for (session, body) in [
             ("providers", r#"{"providers": []}"#),
-            ("provider-entry", r#"{"providers": {"claude": "uuid"}}"#),
+            ("provider-entry", r#"{"providers": {"claude-code-cli": "uuid"}}"#),
             ("settings", r#"{"settings": []}"#),
             ("pending", r#"{"pending": {}}"#),
             ("pending-entry", r#"{"pending": [{"id": "kept"}]}"#),
@@ -439,8 +439,8 @@ mod tests {
     fn failed_writes_roll_back_every_in_memory_change() {
         let _home = scratch_home("meta-write-failure");
         let mut meta = Meta::open("s");
-        meta.bind("claude", "original").unwrap();
-        meta.mark_synced("claude", 3).unwrap();
+        meta.bind("claude-code-cli", "original").unwrap();
+        meta.mark_synced("claude-code-cli", 3).unwrap();
         meta.set("cwd", json!("/kept")).unwrap();
         meta.set_setting("ask", json!(4)).unwrap();
 
@@ -449,17 +449,17 @@ mod tests {
         fs::write(&blocker, "a regular file").unwrap();
         meta.path = blocker.join("s.meta.json");
 
-        assert!(meta.bind("claude", "lost").is_err());
-        assert!(meta.mark_synced("claude", 99).is_err());
+        assert!(meta.bind("claude-code-cli", "lost").is_err());
+        assert!(meta.mark_synced("claude-code-cli", 99).is_err());
         assert!(meta.set("cwd", json!("/lost")).is_err());
         assert!(meta.set_setting("ask", json!(9)).is_err());
-        assert_eq!(meta.native("claude"), ("original".into(), 3));
+        assert_eq!(meta.native("claude-code-cli"), ("original".into(), 3));
         assert_eq!(meta.get_str("cwd").as_deref(), Some("/kept"));
         assert_eq!(meta.setting("ask"), Some(&json!(4)));
 
         meta.path = valid_path;
-        meta.mark_synced("claude", 4).unwrap();
-        assert_eq!(Meta::open("s").native("claude"), ("original".into(), 4));
+        meta.mark_synced("claude-code-cli", 4).unwrap();
+        assert_eq!(Meta::open("s").native("claude-code-cli"), ("original".into(), 4));
     }
 
     #[test]

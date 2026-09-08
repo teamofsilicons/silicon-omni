@@ -24,5 +24,5 @@ pub use account::Codex;
 pub use runner::Runner;
 pub use stream::Stream;
 
-pub const NAME: &str = "openai";
+pub const NAME: &str = "codex-app-server";
 pub const CLI: &str = "codex";

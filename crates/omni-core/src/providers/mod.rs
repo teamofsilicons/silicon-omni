@@ -16,7 +16,7 @@ use crate::shared::clock;
 
 /// The providers built into omni. Doubles are added at runtime by
 /// [`test::install`] and appear alongside these.
-pub const BUILT_IN: &[&str] = &["claude", "openai", "google"];
+pub const BUILT_IN: &[&str] = &["claude-code-cli", "codex-app-server", "antigravity-cli"];
 
 pub fn names() -> Vec<String> {
     BUILT_IN
@@ -49,9 +49,9 @@ pub fn retunes_instructions(name: &str) -> bool {
 
 pub fn account(name: &str) -> Option<Arc<dyn Account>> {
     match name {
-        "claude" => Some(Arc::new(claude::Claude)),
-        "openai" => Some(Arc::new(openai::Codex)),
-        "google" => Some(Arc::new(google::Antigravity)),
+        "claude-code-cli" => Some(Arc::new(claude::Claude)),
+        "codex-app-server" => Some(Arc::new(openai::Codex)),
+        "antigravity-cli" => Some(Arc::new(google::Antigravity)),
         other if test::is_installed(other) => Some(Arc::new(test::Signed(other.to_string()))),
         _ => None,
     }
@@ -64,9 +64,9 @@ pub fn runner(
     emit: Emit,
 ) -> Option<Box<dyn Runner>> {
     match name {
-        "claude" => Some(Box::new(claude::Runner::new(session_id, config, emit))),
-        "openai" => Some(Box::new(openai::Runner::new(session_id, config, emit))),
-        "google" => Some(Box::new(google::Runner::new(session_id, config, emit))),
+        "claude-code-cli" => Some(Box::new(claude::Runner::new(session_id, config, emit))),
+        "codex-app-server" => Some(Box::new(openai::Runner::new(session_id, config, emit))),
+        "antigravity-cli" => Some(Box::new(google::Runner::new(session_id, config, emit))),
         other if test::is_installed(other) => {
             Some(Box::new(test::Double::new(other, session_id, config, emit)))
         }
