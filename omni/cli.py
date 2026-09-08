@@ -18,6 +18,11 @@ def short() -> NoReturn:
     _execute("so")
 
 
+def omni() -> NoReturn:
+    """The same client again, under the name `omni web` belongs to."""
+    _execute("omni")
+
+
 def _execute(name: str) -> NoReturn:
     binary = Path(__file__).with_name("bin") / name
     try:

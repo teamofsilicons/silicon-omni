@@ -1,0 +1,30 @@
+{
+  "name": "@teamofsilicons/omni-web",
+  "version": "0.7.0",
+  "description": "One conversation across Claude Code, Codex and Antigravity, from a browser, over the omni web bridge.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./omni.js",
+  "module": "./omni.js",
+  "types": "./omni.d.ts",
+  "exports": {
+    ".": {
+      "types": "./omni.d.ts",
+      "default": "./omni.js"
+    }
+  },
+  "files": ["omni.js", "omni.d.ts", "README.md"],
+  "sideEffects": false,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": ["claude", "codex", "antigravity", "gemini", "agents", "llm", "omni"],
+  "homepage": "https://omni.teamofsilicons.com/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teamofsilicons/silicon-omni.git",
+    "directory": "web"
+  },
+  "bugs": "https://github.com/teamofsilicons/silicon-omni/issues"
+}

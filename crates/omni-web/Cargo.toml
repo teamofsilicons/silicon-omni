@@ -1,0 +1,21 @@
+[package]
+name = "omni-web"
+description = "The silicon omni web bridge: a loopback HTTP door onto the omni daemon."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+omni-core.workspace = true
+silicon-omni.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4"] }
+signal-hook = "0.3"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }

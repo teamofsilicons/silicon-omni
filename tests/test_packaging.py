@@ -13,7 +13,7 @@ class Executed(Exception):
 
 @pytest.mark.parametrize(
     ("entrypoint", "name"),
-    [(cli.main, "silicon-omni"), (cli.short, "so")],
+    [(cli.main, "silicon-omni"), (cli.short, "so"), (cli.omni, "omni")],
 )
 def test_console_script_execs_the_bundled_terminal_client(monkeypatch, entrypoint, name):
     seen = {}
@@ -41,7 +41,7 @@ def test_console_script_execs_the_bundled_terminal_client(monkeypatch, entrypoin
 
 @pytest.mark.parametrize(
     ("entrypoint", "name"),
-    [(cli.main, "silicon-omni"), (cli.short, "so")],
+    [(cli.main, "silicon-omni"), (cli.short, "so"), (cli.omni, "omni")],
 )
 def test_console_script_reports_an_exec_failure(monkeypatch, entrypoint, name):
     def fail(path, argv):

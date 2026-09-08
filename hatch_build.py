@@ -57,7 +57,7 @@ class CustomBuildHook(BuildHookInterface):
             check=False,
         )
 
-        expected = {"silicon-omni", "so", "omnid"}
+        expected = {"silicon-omni", "so", "omni", "omnid"}
         binaries: dict[str, Path] = {}
         diagnostics: list[str] = []
         for line in result.stdout.splitlines():
@@ -81,7 +81,7 @@ class CustomBuildHook(BuildHookInterface):
             sys.stderr.write("".join(diagnostics))
         if result.returncode:
             raise RuntimeError(
-                "Cargo failed to build silicon-omni/so and omnid "
+                "Cargo failed to build silicon-omni/so/omni and omnid "
                 f"(exit status {result.returncode})"
             )
 

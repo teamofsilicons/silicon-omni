@@ -227,6 +227,9 @@ chat.system_prompt("...") or chat.system_prompt_file("/../../abc.txt") # either 
 
 every session allows multiple connects for both reading events & logs, and write/send.
 
+a script can be run on any system, it installs & uses omni. it also sets up the omni cli and puts it to path.
+
+
 
 
 CODEX:
@@ -285,7 +288,15 @@ Use live tests with real providers to make sure its real world resilient.
 when running live tests, keep it in the same OMNI_HOME as the real usage. then run a cleanup script after the tests are done. this will ensure that all things are as they would be during a live usage.
 use  ~/.omni/cwd/ so that its easy to cleanup after testing. seed
 
+Omni Web:
+`omni web` runs a webserver on localhost:1998 (first preference, or it moves down (1997, 1996...) and finds the next available port)
 
+`omni web connect` then it shows a 8 digit connect key "RNDM-PORT" (XULA-1998)
+this is a single provider code, once connected via this code, its used up and exchanged with omniauth.
+
+this will give all the information needed to connect to the omni-web.
+
+once a 3rd party has connected via this token, then it sends an omniauth which is short lived while this bridge is on the same port. if the bridge dies & starts on a new port, all previous auth is cleared and must be reconnected. the bridge tries to restart on the last used port saved inside .omni. if it cant then it restarts the back counting from 1998.
 
 
 # codebase
