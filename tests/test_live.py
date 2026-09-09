@@ -46,7 +46,7 @@ def talk(session_id, providers, intelligence=CHEAPEST):
     chat = Inference.load_or_create_session(session_id, providers)
     chat.from_here = max((event.seq for event in chat.history()), default=-1) + 1
     chat.cwd(str(paths.ensure(paths.home() / "cwd" / session_id)))
-    chat.intelligence(intelligence)
+    chat.model(intelligence=intelligence)
     chat.disable_subagents()
     chat.disable_mcp()
     return chat
@@ -63,7 +63,7 @@ def said(chat):
 
 def has_quota(provider):
     """Known-full windows cannot run an inference test, even when auth is healthy."""
-    limits = getattr(Inference, provider).limits
+    limits = getattr(Inference, provider.replace("-", "_")).limits
     if not isinstance(limits, dict):
         return False
     return not any(
@@ -115,7 +115,7 @@ def test_a_provider_answers_runs_a_tool_and_remembers(provider):
 
 
 def test_auth_and_limits_answer_without_a_turn(provider):
-    account = getattr(Inference, provider)
+    account = getattr(Inference, provider.replace("-", "_"))
     assert account.auth_status == "authenticated"
     limits = account.limits
     assert set(limits) == {"5h", "7d"}
@@ -136,7 +136,7 @@ def test_a_conversation_survives_moving_between_providers():
         # translation/resume boundary without making this test depend on the
         # ranking deployed today.
         chat.active_inference_providers([name])
-        chat.intelligence(CHEAPEST)
+        chat.model(intelligence=CHEAPEST)
 
     try:
         chat.start()
