@@ -474,9 +474,9 @@ character tool result. A provider arriving late gets the whole conversation.
 ## Auth
 
 ```python
-Inference.claude.auth_status          # 'authenticated' | 'unauthenticated'
-print(Inference.claude.start_auth())  # the URL to open
-Inference.claude.finish_auth("code-or-redirect-url")
+Inference.claude_code_cli.auth_status          # 'authenticated' | 'unauthenticated'
+print(Inference.claude_code_cli.start_auth())  # the URL to open
+Inference.claude_code_cli.finish_auth("code-or-redirect-url")
 ```
 
 omni drives each CLI's own login rather than making you use the CLI: it starts the
@@ -505,7 +505,7 @@ nothing re-runs a tool that may already have run.
 ## Limits
 
 ```python
-Inference.openai.limits
+Inference.codex_app_server.limits
 # {'5h': {'used': 0.0,  'reset': '2026-08-21T14:31:07.000Z'},
 #  '7d': {'used': 0.16, 'reset': '2026-08-21T10:53:25.000Z'}}
 ```

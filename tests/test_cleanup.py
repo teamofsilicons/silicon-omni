@@ -45,7 +45,7 @@ def home(tmp_path):
     (root / "jails" / "codex").mkdir(parents=True)
     (root / "cache").mkdir(parents=True)
     (root / "cache" / "intelligence.json").write_text(
-        json.dumps({"version": 2, "test": {"levels": {}}, "claude+google": {"levels": {}}})
+        json.dumps({"version": 2, "test": {"levels": {}}, "claude-code-cli+antigravity-cli": {"levels": {}}})
     )
     return root
 
@@ -84,7 +84,7 @@ def test_it_drops_the_pinned_test_dial_but_keeps_real_ones(home):
     run(home)
     blob = json.loads((home / "cache" / "intelligence.json").read_text())
     assert "test" not in blob, "the double's pinned dial is not a real one"
-    assert "claude+google" in blob, "a real dial is a cache, not litter"
+    assert "claude-code-cli+antigravity-cli" in blob, "a real dial is a cache, not litter"
 
 
 def test_a_dry_run_removes_nothing(home):

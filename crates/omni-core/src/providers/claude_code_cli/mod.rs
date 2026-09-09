@@ -15,4 +15,4 @@ pub use runner::Runner;
 pub use stream::Stream;
 
 pub const NAME: &str = "claude-code-cli";
-pub const CLI: &str = "claude-code-cli";
+pub const CLI: &str = "claude";

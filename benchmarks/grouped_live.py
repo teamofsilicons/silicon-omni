@@ -424,7 +424,7 @@ def classify_command(command: str) -> str:
     if re.search(r"(?:^|[/\s])codex\s+app-server(?:\s|$)", lowered):
         return "codex-app-server"
     if (
-        any(base == "claude-code-cli" for base in bases)
+        any(base == "claude" for base in bases)
         or re.search(r"(?:^|[/\s])claude(?:\s|$)", lowered)
         or "@anthropic-ai/claude-code" in lowered
         or "/claude-code/" in lowered
@@ -1376,7 +1376,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         result["module"] = module_info
         result["setup"]["import_ms"] = ms_between(import_begin, import_end)
 
-        cli_paths = {name: shutil.which(name) for name in ("claude-code-cli", "codex", "agy")}
+        cli_paths = {name: shutil.which(name) for name in ("claude", "codex", "agy")}
         result["setup"]["cli_paths"] = cli_paths
         if not args.skip_cli_check:
             missing = [name for name, path in cli_paths.items() if not path]

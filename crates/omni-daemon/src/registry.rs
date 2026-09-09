@@ -441,7 +441,7 @@ impl Registry {
             .count();
         if reaped > 0 {
             // A codex server with no threads left on it is next to go.
-            omni_core::providers::openai::server::reap_idle();
+            omni_core::providers::codex_app_server::server::reap_idle();
         }
         reaped
     }
@@ -453,7 +453,7 @@ impl Registry {
         for (_, live) in sessions {
             live.shut();
         }
-        omni_core::providers::openai::server::shutdown();
+        omni_core::providers::codex_app_server::server::shutdown();
     }
 }
 

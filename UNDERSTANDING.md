@@ -127,10 +127,10 @@ this behaviour is turned on by default and can be stopped using `chat.disable_au
 ```python
 from omni import Inference
 
-Inference.claude.auth_status # authenticated or unauthenticated
-print(Inference.claude.start_auth())
+Inference.claude_code_cli.auth_status # authenticated or unauthenticated
+print(Inference.claude_code_cli.start_auth())
 # > print the url to login from
-Inference.claude.finish_auth("pass in code or redirect url")
+Inference.claude_code_cli.finish_auth("pass in code or redirect url")
 # > returns authenticated or unauthenticated
 # this can be done for any provider.
 ```
@@ -151,7 +151,7 @@ Session Limit
 ```python
 from omni import Inference
 
-Inference.claude.limits
+Inference.claude_code_cli.limits
 # > {"5h": {"used": 0.24, "reset": ISO string}, "7d": {"used": 0.88, "reset": ISO string}}
 # ISO string or None incase no session limit reset time. Used can also be None.
 # make sure all reset time is in ISO strings. for all providers.
@@ -185,12 +185,12 @@ oh, and codex and claude support a /fast for their models. false by default. but
 
 key based model selection:
 best one per provider we have, ranked from left to right.
-"fast": [gpt-6-astra-max-fast, gemini-3.8-flash-low, claude-opus-5-low-fast]
-"code": [gpt-6-astra-max, claude-opus-5-max, gemini-3.8-flash-high]
-"design": [claude-opus-5-max, gpt-6-astra-max, gemini-3.8-flash-high]
-"research": [gpt-6-astra-max, claude-opus-5-max, gemini-3.8-flash-high]
+"fast": [gpt-6-astra-low-fast, gemini-3.8-flash-low, claude-opus-5-low-fast]
+"code": [gpt-6-astra-high, claude-opus-5-max, gemini-3.8-flash-high]
+"design": [claude-opus-5-max, gpt-6-astra-high, gemini-3.8-flash-high]
+"research": [gpt-6-astra-high, claude-opus-5-max, gemini-3.8-flash-high]
 "cost": [gpt-6-astra-low, gemini-3.8-flash-low, claude-opus-5-low]
-"general": [gpt-6-astra-xhigh, claude-opus-5-medium, gemini-3.8-flash-high]
+"general": [gpt-6-astra-high, claude-opus-5-medium, gemini-3.8-flash-high]
 
 the dict you give for model and effort should not be maintained as a local dict. it should be directly pluggable into the model switcher. this is done so that when a new model is launched, the slug can be changed on the remote, and it will be implemeted everywhere. programatic changes to model name or effort is ok but it should require no upkeep when new models drop. follow the same pattern that proviers use right now.
 

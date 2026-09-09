@@ -43,7 +43,7 @@ impl Account for Claude {
     }
 
     fn probe(&self) -> String {
-        let Some((code, out)) = output(&["claude-code-cli", "auth", "status"], Duration::from_secs(20))
+        let Some((code, out)) = output(&[super::CLI, "auth", "status"], Duration::from_secs(20))
         else {
             return UNAUTHENTICATED.into();
         };
@@ -62,7 +62,7 @@ impl Account for Claude {
     fn start_auth(&self) -> String {
         Login::begin(
             super::NAME,
-            &["claude-code-cli", "auth", "login"],
+            &[super::CLI, "auth", "login"],
             Duration::from_secs(45),
         )
     }

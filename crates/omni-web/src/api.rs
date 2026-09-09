@@ -911,7 +911,7 @@ mod tests {
         for what in ["start_auth", "finish_auth", "forget"] {
             let mut request = asking("GET", "/account", "localhost:1998");
             request.headers.insert("authorization".into(), format!("Bearer {token}"));
-            request.query.insert("provider".into(), "claude".into());
+            request.query.insert("provider".into(), "claude-code-cli".into());
             request.query.insert("what".into(), what.into());
             let (status, answer) = body(Web::answer(&me, request));
             assert_eq!(status, 403, "{what}");
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn settings_are_read_ordered_or_plain() {
         let ordered = settings(&json!([
-            {"what": "providers", "value": ["claude"]},
+            {"what": "providers", "value": ["claude-code-cli"]},
             {"what": "model", "value": {"how": "key", "key": "code"}}
         ]))
         .unwrap();

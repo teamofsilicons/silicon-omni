@@ -829,7 +829,7 @@ mod tests {
         assert!(parse_setting("intelligence", "44").is_err(), "0 to 10");
         assert_eq!(parse_setting("mcp", "false").unwrap(), json!(false));
         assert_eq!(
-            parse_setting("providers", "claude, openai").unwrap(),
+            parse_setting("providers", "claude-code-cli, codex-app-server").unwrap(),
             json!(["claude-code-cli", "codex-app-server"])
         );
         assert_eq!(

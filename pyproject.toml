@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silicon-omni"
-version = "0.7.1"
+version = "0.7.2"
 description = "One Python interface for Claude Code, Codex and Antigravity, backed by a persistent Rust daemon."
 readme = "README.md"
 requires-python = ">=3.10"

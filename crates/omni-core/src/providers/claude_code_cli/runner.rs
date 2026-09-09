@@ -64,7 +64,7 @@ impl Runner {
 
     fn argv(&self, resume: bool) -> Vec<String> {
         let mut argv: Vec<String> = [
-            "claude-code-cli",
+            super::CLI,
             "-p",
             "--output-format",
             "stream-json",
@@ -303,6 +303,7 @@ mod tests {
     #[test]
     fn the_quiet_defaults_are_on_the_command_line() {
         let argv = argv_of(Config::default());
+        assert_eq!(argv[0], "claude");
         assert!(
             argv.windows(2)
                 .any(|pair| pair == ["--disallowedTools", "Agent(*)"])

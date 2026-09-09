@@ -21,7 +21,7 @@ class NoAnswer(LookupError):
 class ProviderHandle:
     """One provider's account: is it here, are we logged in, what is left.
 
-    Nothing is fetched until you ask for it, so ``Inference.claude`` costs
+    Nothing is fetched until you ask for it, so ``Inference.claude_code_cli`` costs
     nothing to mention.
     """
 
@@ -72,11 +72,11 @@ class ProviderHandle:
 
 class Inference:
     #: Anthropic, through the ``claude`` CLI.
-    claude = ProviderHandle("claude-code-cli")
+    claude_code_cli = ProviderHandle("claude-code-cli")
     #: OpenAI, through ``codex app-server``.
-    openai = ProviderHandle("codex-app-server")
+    codex_app_server = ProviderHandle("codex-app-server")
     #: Google, through Antigravity's ``agy``.
-    google = ProviderHandle("antigravity-cli")
+    antigravity_cli = ProviderHandle("antigravity-cli")
 
     @staticmethod
     def get_available_providers(limit_to: Sequence[str] | None = None) -> list[str]:

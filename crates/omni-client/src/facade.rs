@@ -76,11 +76,11 @@ impl From<LiveSession> for LiveChat {
 pub struct Inference {
     client: Client,
     /// Anthropic through the `claude` CLI.
-    pub claude: ProviderHandle,
+    pub claude_code_cli: ProviderHandle,
     /// OpenAI through `codex app-server`.
-    pub openai: ProviderHandle,
+    pub codex_app_server: ProviderHandle,
     /// Google through Antigravity's `agy` CLI.
-    pub google: ProviderHandle,
+    pub antigravity_cli: ProviderHandle,
 }
 
 impl fmt::Debug for Inference {
@@ -111,9 +111,9 @@ impl Inference {
     /// Wrap an existing raw client. Useful for custom discovery and tests.
     pub fn from_client(client: Client) -> Self {
         Inference {
-            claude: ProviderHandle::new(client.clone(), "claude-code-cli"),
-            openai: ProviderHandle::new(client.clone(), "codex-app-server"),
-            google: ProviderHandle::new(client.clone(), "antigravity-cli"),
+            claude_code_cli: ProviderHandle::new(client.clone(), "claude-code-cli"),
+            codex_app_server: ProviderHandle::new(client.clone(), "codex-app-server"),
+            antigravity_cli: ProviderHandle::new(client.clone(), "antigravity-cli"),
             client,
         }
     }

@@ -1,10 +1,10 @@
 //! The providers omni speaks, and the lookup everything else goes through.
 
 pub mod base;
-pub mod claude;
-pub mod google;
+pub mod claude_code_cli;
+pub mod antigravity_cli;
 pub mod login;
-pub mod openai;
+pub mod codex_app_server;
 pub mod test;
 
 use std::sync::Arc;
@@ -44,14 +44,14 @@ pub fn names() -> Vec<String> {
 /// Anything answering false here has to be given a new native session when the
 /// prompt changes, or the change is silently lost.
 pub fn retunes_instructions(name: &str) -> bool {
-    name != openai::NAME
+    name != codex_app_server::NAME
 }
 
 pub fn account(name: &str) -> Option<Arc<dyn Account>> {
     match name {
-        "claude-code-cli" => Some(Arc::new(claude::Claude)),
-        "codex-app-server" => Some(Arc::new(openai::Codex)),
-        "antigravity-cli" => Some(Arc::new(google::Antigravity)),
+        "claude-code-cli" => Some(Arc::new(claude_code_cli::Claude)),
+        "codex-app-server" => Some(Arc::new(codex_app_server::Codex)),
+        "antigravity-cli" => Some(Arc::new(antigravity_cli::Antigravity)),
         other if test::is_installed(other) => Some(Arc::new(test::Signed(other.to_string()))),
         _ => None,
     }
@@ -64,9 +64,9 @@ pub fn runner(
     emit: Emit,
 ) -> Option<Box<dyn Runner>> {
     match name {
-        "claude-code-cli" => Some(Box::new(claude::Runner::new(session_id, config, emit))),
-        "codex-app-server" => Some(Box::new(openai::Runner::new(session_id, config, emit))),
-        "antigravity-cli" => Some(Box::new(google::Runner::new(session_id, config, emit))),
+        "claude-code-cli" => Some(Box::new(claude_code_cli::Runner::new(session_id, config, emit))),
+        "codex-app-server" => Some(Box::new(codex_app_server::Runner::new(session_id, config, emit))),
+        "antigravity-cli" => Some(Box::new(antigravity_cli::Runner::new(session_id, config, emit))),
         other if test::is_installed(other) => {
             Some(Box::new(test::Double::new(other, session_id, config, emit)))
         }

@@ -81,10 +81,10 @@ test("what should answer is said three ways and only three", () => {
     value: 7,
     bench: "GDPval",
   })
-  assert.deepEqual(ask({ model: "gemini-3.7-flash-low", provider: "google" }), {
+  assert.deepEqual(ask({ model: "gemini-3.8-flash-low", provider: "antigravity-cli" }), {
     how: "model",
-    model: "gemini-3.7-flash-low",
-    provider: "google",
+    model: "gemini-3.8-flash-low",
+    provider: "antigravity-cli",
     effort: "",
     fast: false,
   })
@@ -177,7 +177,7 @@ test("settings asked for before start travel with the open", async () => {
     "/events?session=demo&since=-1": { stream: "event: end\ndata: {}\n\n" },
   })
   const omni = new Inference({ port: 1998, omniauth: "omniauth_x", store: null, fetch: doFetch })
-  const chat = omni.loadOrCreateSession("demo", ["claude"])
+  const chat = omni.loadOrCreateSession("demo", ["claude-code-cli"])
   await chat.model("code")
   await chat.set("system_prompt", "be exact")
   assert.equal(chat.started, false, "nothing has been opened yet")
@@ -188,7 +188,7 @@ test("settings asked for before start travel with the open", async () => {
     { what: "model", value: { how: "key", key: "code" } },
     { what: "system_prompt", value: "be exact" },
   ])
-  assert.equal(sent.providers[0], "claude")
+  assert.equal(sent.providers[0], "claude-code-cli")
   assert.equal(sent.from, -1)
   chat.close()
 })

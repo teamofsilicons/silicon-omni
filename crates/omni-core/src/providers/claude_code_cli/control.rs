@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::shared::proc::Spawn;
 
 pub const BARE: &[&str] = &[
-    "claude-code-cli",
+    super::CLI,
     "-p",
     "--output-format",
     "stream-json",

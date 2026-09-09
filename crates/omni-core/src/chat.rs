@@ -1687,7 +1687,7 @@ mod tests {
 
     impl Runner for GeneratedRunner {
         fn name(&self) -> &str {
-            crate::providers::openai::NAME
+            crate::providers::codex_app_server::NAME
         }
 
         fn native_id(&self) -> String {
@@ -1760,7 +1760,7 @@ mod tests {
         let heard = seen.clone();
         let (mut chat, handle) = Chat::open(
             name,
-            vec![crate::providers::openai::NAME.into()],
+            vec![crate::providers::codex_app_server::NAME.into()],
             Arc::new(move |event| heard.lock().unwrap().push(event)),
         );
         let stopped = Arc::new(AtomicBool::new(false));
@@ -1770,7 +1770,7 @@ mod tests {
             stopped: stopped.clone(),
         }));
         chat.current = Some((
-            crate::providers::openai::NAME.into(),
+            crate::providers::codex_app_server::NAME.into(),
             "model".into(),
             String::new(),
             Config::default(),
@@ -1790,7 +1790,7 @@ mod tests {
 
     fn acknowledgement(text: &str, opening: &str) -> Event {
         crate::providers::base::confirmed(text, opening)
-            .from(crate::providers::openai::NAME)
+            .from(crate::providers::codex_app_server::NAME)
             .about("model")
     }
 
@@ -1849,12 +1849,12 @@ mod tests {
         chat.absorb(acknowledgement("one", event_type::START));
         chat.dispatch("two".into());
 
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
 
         chat.absorb(acknowledgement("two", event_type::START));
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         assert_eq!(handle.snapshot().status, WAITING);
         assert!(!handle.snapshot().in_turn);
         let starts: Vec<i64> = chat
@@ -1894,17 +1894,17 @@ mod tests {
         assert_eq!(ids.len(), 3);
         assert!(Meta::open("s").pending().is_empty());
 
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
         assert_eq!(chat.next_turns, 1);
 
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         assert_eq!(handle.snapshot().status, BUSY);
         assert!(handle.snapshot().in_turn);
         assert_eq!(chat.next_turns, 0);
 
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         assert_eq!(handle.snapshot().status, WAITING);
         assert!(!handle.snapshot().in_turn);
     }
@@ -2046,7 +2046,7 @@ mod tests {
         chat.dispatch("landed".into());
         chat.post
             .send(Wake::Heard(Box::new(
-                Event::new(event_type::END).from(crate::providers::openai::NAME),
+                Event::new(event_type::END).from(crate::providers::codex_app_server::NAME),
             )))
             .unwrap();
 
@@ -2198,7 +2198,7 @@ mod tests {
         let _home = crate::testing::scratch_home("old-codex-generation");
         let (mut chat, _) = Chat::open(
             "s",
-            vec![crate::providers::openai::NAME.into()],
+            vec![crate::providers::codex_app_server::NAME.into()],
             Arc::new(|_| {}),
         );
         let stopped = Arc::new(AtomicBool::new(false));
@@ -2208,14 +2208,14 @@ mod tests {
             stopped: stopped.clone(),
         }));
         chat.current = Some((
-            crate::providers::openai::NAME.into(),
+            crate::providers::codex_app_server::NAME.into(),
             "model".into(),
             String::new(),
             Config::default(),
         ));
         chat.in_turn = true;
 
-        chat.absorb(crate::providers::openai::server::exit_event(1, 9));
+        chat.absorb(crate::providers::codex_app_server::server::exit_event(1, 9));
 
         assert!(chat.runner.is_some(), "the replacement remains attached");
         assert!(chat.in_turn, "its turn remains open");
@@ -2241,7 +2241,7 @@ mod tests {
 
         chat.absorb(
             Event::new(event_type::END)
-                .from(crate::providers::openai::NAME)
+                .from(crate::providers::codex_app_server::NAME)
                 .with(RUNNER_EPOCH, 1),
         );
 
@@ -2265,40 +2265,40 @@ mod tests {
 
         chat.absorb(
             Event::new(event_type::TEXT)
-                .from(crate::providers::google::NAME)
+                .from(crate::providers::antigravity_cli::NAME)
                 .saying("late but preserved")
                 .with(RUNNER_EPOCH, 1),
         );
         chat.absorb(
             Event::new(event_type::TEXT)
-                .from(crate::providers::openai::NAME)
+                .from(crate::providers::codex_app_server::NAME)
                 .saying("late from an older native runner")
                 .with(RUNNER_EPOCH, 1),
         );
         chat.absorb(
             Event::new(event_type::TEXT)
-                .from(crate::providers::openai::NAME)
+                .from(crate::providers::codex_app_server::NAME)
                 .saying("already native")
                 .with(RUNNER_EPOCH, 2),
         );
         chat.finish_turn();
 
-        assert_eq!(chat.meta.native(crate::providers::openai::NAME).1, -1);
+        assert_eq!(chat.meta.native(crate::providers::codex_app_server::NAME).1, -1);
 
         chat.absorb(
             Event::new(event_type::TEXT)
-                .from(crate::providers::openai::NAME)
+                .from(crate::providers::codex_app_server::NAME)
                 .saying("a later native turn")
                 .with(RUNNER_EPOCH, 2),
         );
         chat.finish_turn();
 
         assert_eq!(
-            chat.meta.native(crate::providers::openai::NAME).1,
+            chat.meta.native(crate::providers::codex_app_server::NAME).1,
             -1,
             "a later turn cannot leap the native watermark over the hole"
         );
-        let missed = chat.history_for(crate::providers::openai::NAME, 0, true);
+        let missed = chat.history_for(crate::providers::codex_app_server::NAME, 0, true);
         assert_eq!(missed.len(), 2);
         assert_eq!(missed[0].text, "late but preserved");
         assert_eq!(missed[0].turn, 3);
@@ -2315,7 +2315,7 @@ mod tests {
 
         chat.absorb(
             Event::failure(CRASH, "temporary stream failure")
-                .from(crate::providers::openai::NAME)
+                .from(crate::providers::codex_app_server::NAME)
                 .with("willRetry", true),
         );
 
@@ -2346,12 +2346,12 @@ mod tests {
         );
         chat.in_turn = true;
         chat.meta
-            .bind(crate::providers::openai::NAME, "native-before")
+            .bind(crate::providers::codex_app_server::NAME, "native-before")
             .unwrap();
 
         let persisted = chat.record(Event::config("persisted")).unwrap();
         chat.store.path = invalid_child("store-is-blocked");
-        chat.absorb(Event::new(event_type::END).from(crate::providers::openai::NAME));
+        chat.absorb(Event::new(event_type::END).from(crate::providers::codex_app_server::NAME));
         chat.publish();
 
         let events = seen.lock().unwrap();
@@ -2369,7 +2369,7 @@ mod tests {
             "the failed append vanished"
         );
         assert_eq!(
-            chat.meta.native(crate::providers::openai::NAME),
+            chat.meta.native(crate::providers::codex_app_server::NAME),
             ("native-before".into(), -1),
             "an END that was not persisted cannot advance the watermark"
         );
@@ -2416,7 +2416,7 @@ mod tests {
         let _home = crate::testing::scratch_home("chat-watermark-failure");
         let (mut chat, handle, seen, active_stopped) = running_chat("s");
         chat.meta
-            .bind(crate::providers::openai::NAME, "native-before")
+            .bind(crate::providers::codex_app_server::NAME, "native-before")
             .unwrap();
         let persisted = chat
             .record(Event::new(event_type::TEXT).saying("durable"))
@@ -2428,7 +2428,7 @@ mod tests {
         chat.publish();
 
         assert_eq!(
-            chat.meta.native(crate::providers::openai::NAME),
+            chat.meta.native(crate::providers::codex_app_server::NAME),
             ("native-before".into(), -1),
             "the failed watermark did not exist in memory"
         );
