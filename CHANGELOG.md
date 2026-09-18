@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 **A provider that fails no longer keeps the chat.** A crash, a rate limit or an
 outage the provider ends the turn on, or a CLI that will not start, is now handled
