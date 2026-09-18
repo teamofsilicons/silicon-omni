@@ -43,8 +43,10 @@ what it was sent, and can be driven by hand::
 
 Each knob mimics something a real CLI does: ``defer`` is agy, which only sees
 history when the next message goes out; ``tunable = False`` is agy again, which
-cannot change model without a restart; a native id starting with ``gone-`` is
-any provider that has forgotten a session omni thinks it still has.
+cannot change model without a restart; ``startable = False`` is any CLI that is
+installed but exits at once — set it through :func:`prepare` before the
+provider has ever come up; a native id starting with ``gone-`` is any provider
+that has forgotten a session omni thinks it still has.
 """
 
 import time
@@ -59,7 +61,7 @@ RECALL = "[recall]"
 FORGET = "gone-"
 
 #: What a knob is called, and what it mimics. See the module docstring.
-KNOBS = ("autoreply", "tunable", "defer")
+KNOBS = ("autoreply", "tunable", "defer", "startable")
 
 
 class Live:
@@ -178,6 +180,13 @@ def running(name: str = NAME, timeout: float = 10.0) -> Live:
             if time.time() >= deadline:
                 raise
             time.sleep(0.02)
+
+
+def prepare(name: str = NAME) -> Live:
+    """The double for a provider before it has ever run, so a knob can be set
+    ahead of its first start — ``test.prepare("beta").startable = False``."""
+    call("test", what="prepare", provider=name)
+    return Live(name)
 
 
 def installed() -> list[str]:

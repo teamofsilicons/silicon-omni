@@ -276,6 +276,11 @@ impl Daemon {
                 Ok(json!(true))
             }
             "installed" => Ok(json!(double::installed())),
+            "prepare" => {
+                let name = request.provider.clone().ok_or("prepare needs a provider")?;
+                double::prepare(&name);
+                Ok(json!(true))
+            }
             _ => self.drive(what, request),
         }
     }
@@ -292,9 +297,15 @@ impl Daemon {
                     autoreply: value["autoreply"].as_bool().unwrap_or(was.autoreply),
                     tunable: value["tunable"].as_bool().unwrap_or(was.tunable),
                     defer: value["defer"].as_bool().unwrap_or(was.defer),
+                    startable: value["startable"].as_bool().unwrap_or(was.startable),
                 });
                 let now = live.knobs();
-                json!({"autoreply": now.autoreply, "tunable": now.tunable, "defer": now.defer})
+                json!({
+                    "autoreply": now.autoreply,
+                    "tunable": now.tunable,
+                    "defer": now.defer,
+                    "startable": now.startable,
+                })
             }
             "reply" => {
                 live.reply(request.text.as_deref().unwrap_or(""));

@@ -65,6 +65,13 @@ Inference.get_available_providers()   # ['claude-code-cli', 'antigravity-cli', '
 
 Installed *and* logged in. Anything else is not offered.
 
+omni finds a CLI the way your terminal does. The daemon inherits its environment from
+whatever started it, and a GUI, launchd or an IDE has not read your `.zshrc` — so on
+its first breath the daemon asks your login shell what it would have had, puts that
+`PATH` in front of its own, and starts every CLI with that environment. A `claude`
+that only your shell profile knows about is found, and so is anything it runs. A CLI
+installed after the daemon came up is found the next time anybody asks for it.
+
 ### Terminal and Rust clients
 
 The `silicon-omni` and `so` commands installed by the Python wheel are the same
@@ -487,20 +494,34 @@ verbatim — a confusing message you can read beats a silent failure.
 
 One account per provider.
 
-### When a login dies mid-run
+### When a provider fails mid-run
 
-An unauthenticated CLI cannot finish the turn it is in. By default omni takes that
-provider off the chat, resolves the **same intelligence value** again over whoever is
-left, and carries on there — you get an `ERROR`/`auth`, a `CONFIG`/`provider_removed`
-and a `SWITCH_PROVIDER`, and the conversation continues on another vendor's model.
+A provider that cannot finish the turn it is in does not get to keep the chat. By
+default omni closes the turn, takes that provider off the dial, resolves the **same
+ask** again over whoever is left, and carries on there — you get an `ERROR`, a
+`CONFIG`/`provider_removed` saying why, and a `SWITCH_PROVIDER`, and the conversation
+continues on another vendor's model with everything so far already in its head.
+
+| `why` | what happened | for how long |
+|---|---|---|
+| `unauthenticated` | the CLI lost its login | removed from the chat's list, durably — a login does not come back by itself |
+| `crash` | the CLI exited, or reported an error it would not retry | set aside while this chat is live |
+| `limit` / `unavailable` | it ended the turn on a rate limit or an outage | set aside while this chat is live |
+| `would not start` | it refused to come up at all | set aside while this chat is live |
+
+*Set aside* is deliberately not persisted: a bad hour is not a lost login. The
+provider is back the next time the session is opened cold, or the moment you say the
+list again with `chat.active_inference_providers([...])`. If every provider has
+failed, omni says so and the next `send` tries them all once more.
 
 ```python
 chat.disable_autoremoving_unauthenticated_providers()
 ```
 
-Turn it off and the auth error is reported and the turn simply ends. Either way the
-failed turn is not replayed: it is in the log, so the next provider reads it, but
-nothing re-runs a tool that may already have run.
+Turn it off and the error is reported and the turn simply ends, whatever the cause.
+Either way the failed turn is not replayed: it is in the log, so the next provider
+reads it, but nothing re-runs a tool that may already have run. The one exception is
+a message Claude never acknowledged taking, which is handed to the next provider.
 
 ## Limits
 

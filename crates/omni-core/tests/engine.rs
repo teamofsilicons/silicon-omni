@@ -8,7 +8,7 @@ mod harness;
 use std::time::Duration;
 
 use omni_core::chat::Change;
-use omni_core::events::{AUTH, CRASH, Event, event_type};
+use omni_core::events::{AUTH, CRASH, Event, LIMIT, UNAVAILABLE, event_type};
 use omni_core::providers::test as double;
 use omni_core::session::Meta;
 use omni_core::choose::Ask;
@@ -267,6 +267,157 @@ fn losing_a_login_moves_the_chat_to_whoever_is_left() {
         recalled.contains("hello"),
         "alpha picked up beta's conversation: {recalled}"
     );
+}
+
+#[test]
+fn a_provider_that_fails_the_turn_is_set_aside_and_the_chat_moves_on() {
+    // A crash is reported at once; a limit or an outage is what the provider
+    // ends the turn on. Either way the chat carries on elsewhere.
+    for fault in [CRASH, LIMIT, UNAVAILABLE] {
+        let session = harness::two(&format!("failed-{fault}"));
+        session.set(Change::Model(Ask::intelligence(10)));
+        session.send("hello");
+        assert!(session.settle());
+        assert_eq!(session.snapshot().provider, "beta");
+
+        double::running("beta").unwrap().set_knobs(double::Knobs {
+            autoreply: false,
+            ..Default::default()
+        });
+        session.send("again");
+        session.settle_started();
+        double::running("beta").unwrap().fail(fault, "", true);
+        assert!(
+            session.recorded(|event| event.is(event_type::CONFIG)
+                && event.text == "provider_removed")
+        );
+        assert!(session.settle(), "{fault}");
+
+        let removed = session.notices("provider_removed");
+        let errors: Vec<String> = session
+            .log()
+            .into_iter()
+            .filter(|event| event.is(event_type::ERROR))
+            .map(|event| format!("{}: {}", event.provider, event.error))
+            .collect();
+        assert_eq!(
+            removed.len(),
+            1,
+            "{fault}: removed {:?}; errors {errors:?}; kinds {:?}",
+            removed
+                .iter()
+                .map(|event| (event.provider.clone(), event.extra.clone()))
+                .collect::<Vec<_>>(),
+            session.kinds()
+        );
+        assert_eq!(removed[0].provider, "beta");
+        assert_eq!(removed[0].extra["why"], fault);
+        assert_eq!(session.snapshot().providers, vec!["alpha"], "{fault}");
+        assert_eq!(session.snapshot().provider, "alpha", "{fault}");
+        let moved = session
+            .log()
+            .into_iter()
+            .rfind(|event| event.is(event_type::SWITCH_PROVIDER))
+            .unwrap();
+        assert_eq!((moved.extra["from"].as_str(), moved.extra["to"].as_str()), (Some("beta"), Some("alpha")));
+        assert!(!double::running("beta").unwrap().up(), "put down, not parked");
+
+        session.send("[recall]");
+        assert!(session.settle());
+        let recalled = session.said().pop().unwrap();
+        assert!(
+            recalled.contains("hello"),
+            "alpha picked up beta's conversation after {fault}: {recalled}"
+        );
+    }
+}
+
+#[test]
+fn a_set_aside_provider_is_back_when_the_providers_are_set_again() {
+    let session = harness::two("set-aside");
+    session.set(Change::Model(Ask::intelligence(10)));
+    session.send("hello");
+    assert!(session.settle());
+    double::running("beta").unwrap().set_knobs(double::Knobs {
+        autoreply: false,
+        ..Default::default()
+    });
+    session.send("again");
+    session.settle_started();
+    double::running("beta").unwrap().fail(CRASH, "", true);
+    assert!(session.until(|state| state.idle() && state.provider == "alpha"));
+    assert_eq!(session.snapshot().providers, vec!["alpha"]);
+    double::running("beta").unwrap().set_knobs(double::Knobs::default());
+    session.send("elsewhere");
+    assert!(session.settle());
+
+    // Nothing durable changed: the list on disk still names both.
+    let stored = Meta::open("set-aside");
+    let listed = stored.setting("active_providers").cloned().unwrap();
+    assert_eq!(listed, serde_json::json!(["beta", "alpha"]));
+
+    session.set(Change::Providers(vec!["beta".into(), "alpha".into()]));
+    session.send("[recall]");
+    assert!(session.settle());
+    assert_eq!(session.snapshot().provider, "beta", "given another chance");
+    assert_eq!(session.snapshot().providers, vec!["beta", "alpha"]);
+    let recalled = session.said().pop().unwrap();
+    assert!(
+        recalled.contains("elsewhere"),
+        "and told what it missed while set aside: {recalled}"
+    );
+}
+
+#[test]
+fn a_provider_that_will_not_start_is_skipped_for_the_next_on_the_dial() {
+    let session = harness::two("wont-start");
+    double::prepare("beta").set_knobs(double::Knobs {
+        startable: false,
+        ..Default::default()
+    });
+    session.set(Change::Model(Ask::intelligence(10)));
+    session.send("hello");
+    assert!(session.settle());
+
+    assert_eq!(session.snapshot().provider, "alpha");
+    assert_eq!(session.said(), vec!["echo: hello"], "alpha carried the message");
+    let removed = session.notices("provider_removed");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].provider, "beta");
+    assert_eq!(removed[0].extra["why"], "would not start");
+    assert!(session.log().iter().any(|event| {
+        event.is(event_type::ERROR)
+            && event.provider == "beta"
+            && event.error.contains("could not start a provider")
+    }));
+    assert_eq!(session.snapshot().status, "waiting");
+}
+
+#[test]
+fn when_every_provider_has_failed_the_next_send_tries_them_all_again() {
+    let session = harness::start("all-failed", &["test"]);
+    double::running("test").unwrap().set_knobs(double::Knobs {
+        autoreply: false,
+        ..Default::default()
+    });
+    session.send("hello");
+    session.settle_started();
+    double::running("test").unwrap().fail(CRASH, "", true);
+    assert!(session.recorded(|event| {
+        event.is(event_type::ERROR) && event.error.contains("every provider failed")
+    }));
+    assert!(session.settle());
+    assert_eq!(session.snapshot().status, "waiting", "not stuck on busy");
+    assert_eq!(
+        session.snapshot().providers,
+        vec!["test"],
+        "nobody stays set aside when there is nobody else"
+    );
+
+    double::running("test").unwrap().set_knobs(double::Knobs::default());
+    session.send("once more");
+    assert!(session.settle());
+    assert_eq!(session.said(), vec!["echo: once more"]);
 }
 
 #[test]

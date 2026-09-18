@@ -21,7 +21,7 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::events::{AUTH, CRASH, Event, event_type};
+use crate::events::{AUTH, CRASH, Event, LIMIT, UNAVAILABLE, event_type};
 use crate::choose::{Ask, Pick, resolve};
 use crate::providers;
 use crate::providers::base::{CONFIRMED, CONFIRMED_AS, Config, Delivery, Emit, GENERATION, Runner};
@@ -56,8 +56,11 @@ const MESSAGE_ID: &str = "message_id";
 /// stopped Claude/Google process cannot act on its replacement.
 const RUNNER_EPOCH: &str = "_omni_runner_epoch";
 
-/// Errors that end the turn rather than just being reported.
-const FATAL: &[&str] = &[AUTH, CRASH];
+/// Failures the provider itself survives but the turn does not: it reports
+/// one, then ends the turn on it. Only that pairing — the error, then `END`
+/// with nothing from the model in between — means the turn failed, because a
+/// limit warning the CLI retried past is a turn that succeeded.
+const ENDS_THE_TURN: &[&str] = &[LIMIT, UNAVAILABLE];
 
 /// Notices that are true of a provider rather than of a moment. Worth saying
 /// when you ask for the thing, and when the conversation arrives somewhere that
@@ -223,6 +226,14 @@ pub struct Chat {
     store: Store,
     meta: Meta,
     providers: Vec<String>,
+    /// Providers that failed this chat — crashed, rate limited, would not
+    /// start — and are off the dial until it is next opened cold or the
+    /// providers are set again. Deliberately not persisted: a bad hour is
+    /// not a lost login.
+    benched: BTreeSet<String>,
+    /// The kind of the last final error in the open turn, if the model has
+    /// said nothing since. An `END` that follows it is a turn that failed.
+    turn_failed: Option<String>,
     ask: Ask,
     config: Config,
     sink: Emit,
@@ -402,6 +413,8 @@ impl Chat {
             store,
             meta,
             providers,
+            benched: BTreeSet::new(),
+            turn_failed: None,
             ask,
             config,
             sink,
@@ -535,6 +548,8 @@ impl Chat {
                     "saving active-provider metadata",
                 )?;
                 self.providers = providers;
+                // Saying the list again is saying every name on it is wanted.
+                self.benched.clear();
                 ("providers", json!({"providers": self.providers}))
             }
             Change::Model(ask) => {
@@ -676,20 +691,31 @@ impl Chat {
             return;
         }
         if MODEL_EVENTS.contains(&event.event_type.as_str()) {
+            self.turn_failed = None; // whatever went wrong, the model got past it
             self.settle(|state| state.status = BUSY.into());
         } else if event.is(event_type::END) {
             self.in_turn = false;
             self.turn_recorded = false;
-            self.finish_turn();
+            match self.turn_failed.take() {
+                // The provider ended the turn on an error it could not get past.
+                Some(kind) if self.autoremove => self.failed(&event.provider, &kind),
+                _ => self.finish_turn(),
+            }
         } else if event.is(event_type::ERROR)
-            && FATAL.contains(&event.kind.as_str())
             && event
                 .extra
                 .get("willRetry")
                 .and_then(|value| value.as_bool())
                 != Some(true)
         {
-            self.fatal(&event);
+            match event.kind.as_str() {
+                AUTH => self.unauthenticated(&event),
+                CRASH => self.failed(&event.provider, CRASH),
+                kind if ENDS_THE_TURN.contains(&kind) && self.in_turn => {
+                    self.turn_failed = Some(kind.to_string());
+                }
+                _ => {}
+            }
         }
     }
 
@@ -786,32 +812,26 @@ impl Chat {
         }
     }
 
-    /// An error that ends the turn: a crash, or a login that has gone.
-    fn fatal(&mut self, event: &Event) {
-        if event.kind == AUTH {
-            self.unauthenticated(event);
-        } else {
-            // The provider died. Close the turn honestly and let the next send
-            // retry.
-            self.close_turn(&event.provider, json!({"crashed": true}));
-        }
-    }
-
-    /// A provider lost its login mid-run. Take it off the dial and move on.
-    ///
-    /// The turn is over either way — an unauthenticated CLI cannot finish it.
-    /// What differs is the next one: by default that provider is dropped from
-    /// this chat and the same intelligence level is resolved again over the
-    /// providers that are left, so the conversation carries on somewhere else.
-    fn unauthenticated(&mut self, event: &Event) {
-        let name = match event.provider.is_empty() {
-            false => event.provider.clone(),
+    /// Who an event is about: the provider it names, else the one running.
+    fn blamed(&self, provider: &str) -> String {
+        match provider.is_empty() {
+            false => provider.to_string(),
             true => self
                 .runner
                 .as_ref()
                 .map(|r| r.name().to_string())
                 .unwrap_or_default(),
-        };
+        }
+    }
+
+    /// A provider lost its login mid-run. Take it off the chat and move on.
+    ///
+    /// The turn is over either way — an unauthenticated CLI cannot finish it.
+    /// What differs is the next one: by default that provider is dropped from
+    /// this chat, durably, and the same ask is resolved again over the
+    /// providers that are left, so the conversation carries on somewhere else.
+    fn unauthenticated(&mut self, event: &Event) {
+        let name = self.blamed(&event.provider);
         if !self.close_turn(&name, json!({"unauthenticated": name})) {
             return;
         }
@@ -835,31 +855,79 @@ impl Chat {
             return;
         }
         self.providers = remaining;
+        self.benched.remove(&name);
         // A login can come back; ask the CLI again next time.
         providers::forget(&name);
-        // Whatever it had parked is no longer usable to anyone.
-        if let Some(mut stale) = self.parked.remove(&name) {
-            stale.runner.stop();
-        }
-        if self
-            .record(
-                Event::config("provider_removed")
-                    .from(&name)
-                    .with("why", "unauthenticated")
-                    .with("left", json!(self.providers)),
-            )
-            .is_none()
-        {
-            return;
-        }
-        self.refresh();
-        if self.providers.is_empty() {
-            self.blocked("every provider is unauthenticated; log one back in and send again");
+        if !self.moved_on(&name, "unauthenticated") || !self.anyone_left() {
             return;
         }
         if self.attempt("provider lost its login") {
             self.flush();
         }
+    }
+
+    /// A provider that could not carry the turn: it crashed, or ended the turn
+    /// on a limit or an outage. Same shape as losing a login — close the turn,
+    /// move the chat — except that nothing durable changes: the provider is
+    /// set aside for as long as this chat is live, and is back when the
+    /// session is next opened cold or the providers are set again.
+    fn failed(&mut self, provider: &str, kind: &str) {
+        let name = self.blamed(provider);
+        if !self.close_turn(&name, json!({"failed": kind})) {
+            return;
+        }
+        if !self.autoremove || !self.sideline(&name, kind) {
+            return;
+        }
+        if self.attempt("provider failed") {
+            self.flush();
+        }
+    }
+
+    /// Take a provider off this chat's dial without taking it off the chat.
+    /// `false` means it was not on the dial, or nobody is left to move to.
+    fn sideline(&mut self, name: &str, why: &str) -> bool {
+        if !self.providers.iter().any(|provider| provider == name)
+            || !self.benched.insert(name.to_string())
+        {
+            return false;
+        }
+        self.moved_on(name, why) && self.anyone_left()
+    }
+
+    /// A provider is off the dial: put down whatever it had parked, say so.
+    fn moved_on(&mut self, name: &str, why: &str) -> bool {
+        // Whatever it had parked is no longer usable to anyone.
+        if let Some(mut stale) = self.parked.remove(name) {
+            stale.runner.stop();
+        }
+        let recorded = self
+            .record(
+                Event::config("provider_removed")
+                    .from(name)
+                    .with("why", why)
+                    .with("left", json!(self.usable())),
+            )
+            .is_some();
+        self.refresh();
+        recorded
+    }
+
+    /// Is there anywhere left to go? When there is not, say what to do — and
+    /// if the rest were only set aside, give them all another chance on the
+    /// next send rather than wedge.
+    fn anyone_left(&mut self) -> bool {
+        if !self.usable().is_empty() {
+            return true;
+        }
+        if self.providers.is_empty() {
+            self.blocked("every provider is unauthenticated; log one back in and send again");
+        } else {
+            self.benched.clear();
+            self.refresh();
+            self.blocked("every provider failed; send again to try them all once more");
+        }
+        false
     }
 
     /// Put the runner down and end the turn it was in the middle of.
@@ -1067,16 +1135,30 @@ impl Chat {
     }
 
     /// Bring a provider up, and survive it refusing to come up.
+    ///
+    /// One that will not start is set aside and the next on the dial is tried,
+    /// until something is running or nothing is left. A dial that resolves to
+    /// nothing at all is a different failure, and is only reported.
     fn attempt(&mut self, why: &str) -> bool {
-        match self.rebuild() {
-            Ok(()) => true,
-            Err(err) => {
-                if !self.terminal {
-                    self.blocked(&format!("could not start a provider ({why}): {err}"));
-                }
-                false
+        while let Err(err) = self.rebuild() {
+            if self.terminal {
+                return false;
+            }
+            let culprit = self.rung().map(|rung| rung.provider).unwrap_or_default();
+            let message = format!("could not start a provider ({why}): {err}");
+            if culprit.is_empty() || !self.autoremove {
+                self.blocked(&message);
+                return false;
+            }
+            if self
+                .record(Event::failure(CRASH, message).from(&culprit))
+                .is_none()
+                || !self.sideline(&culprit, "would not start")
+            {
+                return false;
             }
         }
+        true
     }
 
     /// Say what went wrong and go back to waiting, rather than hanging in 'busy'.
@@ -1098,8 +1180,18 @@ impl Chat {
         })
     }
 
+    /// The providers this chat will route to: the list it was given, less any
+    /// set aside for failing.
+    fn usable(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .filter(|provider| !self.benched.contains(*provider))
+            .cloned()
+            .collect()
+    }
+
     fn rung(&self) -> Result<Pick, String> {
-        resolve(&self.ask, &self.providers).map_err(|err| err.to_string())
+        resolve(&self.ask, &self.usable()).map_err(|err| err.to_string())
     }
 
     fn signature(&self, rung: &Pick) -> Signature {
@@ -1658,7 +1750,7 @@ impl Chat {
             .unwrap_or_default();
         self.settle(|state| {
             state.ask = self.ask.clone();
-            state.providers = self.providers.clone();
+            state.providers = self.usable();
             state.cwd = self.config.cwd.clone();
             state.provider = if running.is_empty() {
                 String::new()

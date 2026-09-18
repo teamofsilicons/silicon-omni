@@ -450,12 +450,30 @@ fn talk(daemon: Arc<Daemon>, admission: Arc<Admission>, id: u64, stream: UnixStr
 
 /// Find out which providers are usable before anybody asks.
 ///
-/// Every probe runs a CLI, and the slowest of them takes the better part of a
-/// minute. Paying that once, in the background, at the moment the daemon starts
-/// is the difference between a first session that opens instantly and one that
-/// sits there. This is what a daemon is *for*.
+/// First the daemon learns what a terminal on this machine would have on its
+/// `PATH`, because whoever started the daemon may not have had `~/.zshrc` read
+/// for them — a GUI, launchd, an IDE — and a CLI it cannot find is a provider
+/// it will never offer.
+///
+/// Then every probe runs a CLI, and the slowest of them takes the better part
+/// of a minute. Paying that once, in the background, at the moment the daemon
+/// starts is the difference between a first session that opens instantly and
+/// one that sits there. This is what a daemon is *for*.
 fn prime() {
     std::thread::spawn(|| {
+        let shell = omni_core::shared::env::shell();
+        let answered = omni_core::shared::env::refresh();
+        let how = match omni_core::shared::env::stepped() {
+            true => " (asked in two steps: login, then interactive)",
+            false => "",
+        };
+        say(&match answered {
+            true => format!("environment from {}{how}", shell.display()),
+            false => format!(
+                "{} did not describe its environment; using the daemon's own",
+                shell.display()
+            ),
+        });
         let usable = omni_core::providers::available(None);
         say(&format!(
             "ready: {}",
@@ -482,8 +500,10 @@ fn sweep(daemon: Arc<Daemon>) {
                 say(&format!("let {gone} cold session(s) go"));
             }
             // Keep the answer to "which providers can I use" warm, so no client
-            // ever waits on a CLI to say whether it is logged in.
+            // ever waits on a CLI to say whether it is logged in — and ask the
+            // shell again first, so a CLI installed since is on the list.
             if omni_core::providers::probed_ago().is_none_or(|age| age > 300.0) {
+                omni_core::shared::env::refresh();
                 omni_core::providers::available(None);
             }
         }

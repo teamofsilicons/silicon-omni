@@ -166,19 +166,8 @@ pub fn blank() -> Value {
     json!({"used": null, "reset": null})
 }
 
-/// The first match on `PATH`, the way a shell would find it.
-pub fn which(program: &str) -> Option<std::path::PathBuf> {
-    if program.contains('/') {
-        let path = std::path::PathBuf::from(program);
-        return path.is_file().then_some(path);
-    }
-    std::env::var_os("PATH")?
-        .to_string_lossy()
-        .split(':')
-        .filter(|dir| !dir.is_empty())
-        .map(|dir| std::path::Path::new(dir).join(program))
-        .find(|path| path.is_file())
-}
+/// The first match on the `PATH` a terminal would have. See [`crate::shared::env`].
+pub use crate::shared::env::which;
 
 /// One provider CLI, driving one session.
 ///
@@ -283,12 +272,5 @@ mod tests {
     #[test]
     fn a_path_that_does_not_exist_is_kept_rather_than_blanked() {
         assert_eq!(Config::default().at("/no/such/place").cwd, "/no/such/place");
-    }
-
-    #[test]
-    fn which_finds_what_a_shell_would() {
-        assert!(which("sh").is_some());
-        assert!(which("definitely-not-a-program-99").is_none());
-        assert!(which("/bin/sh").is_some());
     }
 }

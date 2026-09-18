@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from conftest import in_turn, settled
+from conftest import in_turn, recorded, settled
 
 import omni.inference as inference_module
 from omni import Event, Inference, NoAnswer
@@ -324,6 +324,45 @@ def test_losing_a_login_moves_the_chat_to_whoever_is_left(pair):
     assert settled(chat)
     recalled = [event.text for event in chat.history() if event.type == Event.TEXT][-1]
     assert "hello" in recalled, recalled
+
+
+def test_a_crash_moves_the_chat_to_whoever_is_left(pair):
+    chat, big, small = pair
+    chat.model(intelligence=10)
+    chat.start()
+    chat.send("hello")
+    assert settled(chat)
+
+    double.running(big).autoreply = False
+    chat.send("again")
+    assert in_turn(chat)
+    double.running(big).fail("crash", ends=True)
+    assert recorded(
+        chat,
+        lambda event: event.type == Event.CONFIG and event.text == "provider_removed",
+    )
+    assert settled(chat)
+
+    assert chat.refresh()["providers"] == [small], "set aside for this chat"
+    removed = [
+        event
+        for event in chat.history()
+        if event.type == Event.CONFIG and event.text == "provider_removed"
+    ]
+    assert len(removed) == 1 and removed[0].provider == big
+    assert removed[0].extra["why"] == "crash"
+
+    chat.send("[recall]")
+    assert settled(chat)
+    recalled = [event.text for event in chat.history() if event.type == Event.TEXT][-1]
+    assert "hello" in recalled, recalled
+
+    # Saying the list again gives the crashed provider another chance.
+    double.running(big).autoreply = True
+    chat.active_inference_providers([big, small])
+    chat.send("[recall]")
+    assert settled(chat)
+    assert chat.refresh()["provider"] == big
 
 
 def test_turning_the_failover_off_reports_and_stops(pair):

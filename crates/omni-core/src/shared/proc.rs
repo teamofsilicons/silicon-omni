@@ -7,7 +7,12 @@
 //! their own — agy boots a language server — and a group is the only way to be
 //! sure that killing the CLI kills what it started, rather than leaving a
 //! daemon's worth of orphans behind after a long-running session ends.
+//!
+//! Every child is started the way a terminal would start it: found on the
+//! `PATH` the user's shell would have, and given that shell's environment (see
+//! [`env`](super::env)). A CLI you can run from a prompt, omni can run too.
 
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -16,6 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+use super::env;
 
 pub type OnLine = Box<dyn Fn(&str) + Send + Sync>;
 pub type OnExit = Box<dyn Fn(i32) + Send + Sync>;
@@ -152,13 +159,33 @@ impl CallbackGate {
     }
 }
 
+/// A command as a terminal would start it: `program` found on the shell's
+/// `PATH`, and the shell's environment underneath whatever the caller adds.
+///
+/// The lookup happens here rather than being left to `exec`, so a CLI that is
+/// only on the user's shell `PATH` is found even though the daemon's own is
+/// whatever it was started with.
+pub fn command(program: &str) -> Command {
+    let found = match program.contains('/') {
+        true => None,
+        false => env::which(program),
+    };
+    let mut command = Command::new(
+        found
+            .as_deref()
+            .map_or(OsStr::new(program), std::path::Path::as_os_str),
+    );
+    command.envs(env::vars());
+    command
+}
+
 impl LineProcess {
     fn start(spec: Spawn) -> std::io::Result<Self> {
         let (program, rest) = spec
             .argv
             .split_first()
             .ok_or_else(|| std::io::Error::other("nothing to run"))?;
-        let mut command = Command::new(program);
+        let mut command = command(program);
         command
             .args(rest)
             .stdin(Stdio::piped())
@@ -474,7 +501,7 @@ unsafe fn guardian_main(death_read: RawFd, target_pgid: i32, max_fd: RawFd) -> !
 
 /// Run something to completion and collect what it said. For probes, not turns.
 pub fn output(argv: &[&str], timeout: Duration) -> Option<(i32, String)> {
-    let mut command = Command::new(argv[0]);
+    let mut command = command(argv[0]);
     command.args(&argv[1..]);
     run(command, timeout)
 }

@@ -26,8 +26,10 @@
 //! what it was sent, and can be driven by hand. Each knob mimics something a
 //! real CLI does: [`Knobs::defer`] is agy, which only sees history when the
 //! next message goes out; [`Knobs::tunable`] off is agy again, which cannot
-//! change model without a restart; a native id starting with [`FORGET`] is any
-//! provider that has forgotten a session omni thinks it still has.
+//! change model without a restart; [`Knobs::startable`] off is any CLI that is
+//! installed but exits at once — set it with [`prepare`] before the provider
+//! has ever come up; a native id starting with [`FORGET`] is any provider that
+//! has forgotten a session omni thinks it still has.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -63,6 +65,9 @@ pub struct Knobs {
     pub tunable: bool,
     /// Like agy: seeded history only reaches the model with the next message.
     pub defer: bool,
+    /// Comes up when asked. Off, and it refuses the way a CLI with a broken
+    /// install or an unsupported flag does — installed, and no use at all.
+    pub startable: bool,
 }
 
 impl Default for Knobs {
@@ -71,6 +76,7 @@ impl Default for Knobs {
             autoreply: true,
             tunable: true,
             defer: false,
+            startable: true,
         }
     }
 }
@@ -230,12 +236,7 @@ pub struct Double {
 
 impl Double {
     pub fn new(name: &str, session_id: &str, config: &Config, emit: Emit) -> Self {
-        let live = LIVE
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .entry(name.to_string())
-            .or_insert_with(|| Arc::new(Live::new(name)))
-            .clone();
+        let live = prepare(name);
         *live.emit.lock().unwrap_or_else(|p| p.into_inner()) = Some(emit);
         {
             let mut state = live.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -264,6 +265,9 @@ impl Runner for Double {
     }
 
     fn start(&mut self, native_id: &str, history: &[Event]) -> Result<(), String> {
+        if !self.live.knobs().startable {
+            return Err(format!("{} would not start", self.live.name));
+        }
         // A provider that no longer knows the session omni is asking for.
         let native_id = if native_id.starts_with(FORGET) {
             ""
@@ -489,6 +493,16 @@ pub fn install(names: &[String], rungs: &[Pick]) -> Vec<String> {
         }
     }
     picked
+}
+
+/// The live double for a provider, made if it has never run — so its knobs
+/// can be set before the first time it is asked to come up.
+pub fn prepare(name: &str) -> Arc<Live> {
+    LIVE.write()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(name.to_string())
+        .or_insert_with(|| Arc::new(Live::new(name)))
+        .clone()
 }
 
 /// The runner currently up for a provider, to inspect or drive by hand.

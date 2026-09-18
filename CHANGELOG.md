@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+**A provider that fails no longer keeps the chat.** A crash, a rate limit or an
+outage the provider ends the turn on, or a CLI that will not start, is now handled
+the way a lost login always was: the turn is closed, the provider comes off the dial,
+the same ask is resolved over whoever is left, and the conversation carries on there
+with a `CONFIG`/`provider_removed` saying why. Unlike a lost login, none of this is
+persisted — the provider is set aside only while the chat is live, and is back when
+the session reopens cold or `active_inference_providers` is called again. When every
+provider has failed, omni says so and the next send tries them all once more.
+`disable_autoremoving_unauthenticated_providers()` turns all of it off, as before.
+
+**omni finds CLIs the way your terminal does.** The daemon inherits its environment
+from whatever started it, and a GUI, launchd or an IDE does not read `.zshrc` — so a
+`claude` in `~/.local/bin` was invisible, and stayed invisible for as long as the
+daemon lived. The daemon now asks the login shell for its environment once at start
+and again on a miss, at most once a minute; merges that `PATH` in front of its own;
+and starts every CLI with the result. A CLI installed after the daemon came up is
+found the next time anybody asks.
+
+**The test double can refuse to start.** `startable = False`, set through the new
+`prepare()` before the provider first comes up, mimics a CLI that is installed but
+exits at once.
+
 ## 0.7.0
 
 **There are three ways to say what should answer, and `chat.model()` takes all

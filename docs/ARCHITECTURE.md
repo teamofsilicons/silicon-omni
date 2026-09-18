@@ -218,11 +218,18 @@ portable conversation state.
 Failure behavior is part of the architecture, not cleanup after the happy path:
 
 - A runner that refuses a message leaves it queued and records an error.
-- A provider that will not launch returns the session to `waiting`; it never hangs in
-  `busy`.
-- A crash or lost login closes an open turn with a synthetic `END`.
-- By default a provider that loses authentication is removed and the same intelligence
-  value is resolved over those remaining.
+- A provider that will not launch is set aside and the next on the dial is tried. When
+  nothing is left the session returns to `waiting`; it never hangs in `busy`.
+- A crash or lost login closes an open turn with a synthetic `END`. A rate limit or an
+  outage is what the provider itself ends the turn on, so it needs no synthetic one;
+  only an error followed directly by `END` counts, because a limit the CLI retried
+  past is a turn that succeeded.
+- By default a provider that fails — lost login, crash, limit, outage, will not
+  start — comes off the dial and the same ask is resolved over those remaining, with
+  a `CONFIG`/`provider_removed` saying why. A lost login is removed durably. Every
+  other failure only sets the provider aside for the life of the live chat: it is back
+  when the session reopens cold or the providers are set again, and when every provider
+  has failed the bench is cleared so the next send tries them all once more.
 - A dead runner is stopped before its reference is discarded, so no CLI is orphaned.
 - Process stop has a bounded pipe-reader handoff and closes its callback gate before it
   returns. A small death-pipe guardian owns each provider and probe process group, so an
@@ -250,6 +257,13 @@ and emit events. Everything portable lives above those two traits.
 Adapters are under `crates/omni-core/src/providers/`. The shipped `test` provider uses
 the same traits and conductor as the real three, and the daemon exposes controls for it
 so tests in any client language exercise the real socket path.
+
+Every CLI is found and started with the environment the user's login shell would give
+a terminal, not the one the daemon happened to inherit. `shared::env` asks the shell
+once at start and again on a miss, merges its `PATH` in front of the daemon's, and
+fills in any variable the daemon was not given. A daemon started by a GUI or launchd
+therefore finds a CLI that only `.zshrc` knows about, and the CLI's own children see
+the same environment.
 
 ## The dial is somebody else’s problem
 

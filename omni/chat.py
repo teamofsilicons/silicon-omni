@@ -217,17 +217,21 @@ class Chat:
         self.change("mcp", True)
 
     def disable_autoremoving_unauthenticated_providers(self) -> None:
-        """Stop dropping a provider that loses its login mid-run.
+        """Stop moving the chat off a provider that fails mid-run.
 
-        On by default: an unauthenticated CLI cannot finish the turn, so omni
-        takes it off this chat's list and resolves the same ask
-        again over whoever is left. Turn it off and the auth error is reported
-        and the turn simply ends.
+        On by default: a CLI that has lost its login, crashed, ended the turn
+        on a rate limit or an outage, or will not start cannot finish the
+        turn, so omni takes it off this chat's dial and resolves the same ask
+        again over whoever is left. A lost login is removed from the chat
+        durably; every other failure only sets the provider aside while the
+        chat is live, and it is back when the session reopens or the providers
+        are set again. Turn it off and the error is reported and the turn
+        simply ends.
         """
         self.change("autoremove", False)
 
     def enable_autoremoving_unauthenticated_providers(self) -> None:
-        """Drop an unauthenticated provider and continue elsewhere.
+        """Move the chat off a provider that fails and continue elsewhere.
 
         This is the default. The explicit method pairs with
         :meth:`disable_autoremoving_unauthenticated_providers` so callers can
