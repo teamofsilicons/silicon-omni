@@ -33,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
         cargo = shutil.which("cargo")
         if cargo is None:
             raise RuntimeError(
-                "building silicon-omni requires Cargo and Rust 1.85 or newer; "
+                "building silicon-omni requires Cargo and Rust 1.88 or newer; "
                 "install Rust from https://rustup.rs"
             )
 

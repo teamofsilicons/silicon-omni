@@ -24,6 +24,10 @@ found the next time anybody asks.
 `prepare()` before the provider first comes up, mimics a CLI that is installed but
 exits at once.
 
+**Rust 1.88 is the minimum.** `omni-web` has used let chains since 0.7.2, which
+1.85 cannot compile; the workspace's `rust-version` and the wheel builds now say so,
+which is what had been failing every CI wheel build since then.
+
 ## 0.7.0
 
 **There are three ways to say what should answer, and `chat.model()` takes all

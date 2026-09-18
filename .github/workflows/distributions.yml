@@ -59,7 +59,7 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             -o "$RUNNER_TEMP/rustup-init.sh"
-          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain 1.85.0
+          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain 1.88.0
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustc" --version
           "$HOME/.cargo/bin/cargo" --version
@@ -74,7 +74,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >-
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
             -o /tmp/rustup-init.sh &&
-            sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain 1.85.0 &&
+            sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain 1.88.0 &&
             $HOME/.cargo/bin/rustc --version &&
             $HOME/.cargo/bin/cargo --version
           CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
