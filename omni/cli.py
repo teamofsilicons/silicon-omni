@@ -19,7 +19,7 @@ def short() -> NoReturn:
 
 
 def omni() -> NoReturn:
-    """The same client again, under the name `omni web` belongs to."""
+    """Run the same native terminal client through its ``omni`` alias."""
     _execute("omni")
 
 

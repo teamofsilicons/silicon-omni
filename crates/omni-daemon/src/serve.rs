@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
-use omni_core::chat::Change;
+use omni_core::chat::{Change, ContextRecovery};
 use omni_core::providers::test as double;
 use omni_core::session::Store;
 use omni_core::wire::{OPS, PROTOCOL, Reply, Request};
@@ -360,6 +360,16 @@ fn change_from(what: &str, value: &Value) -> Result<Change, String> {
         }),
         "system_prompt" => Change::SystemPrompt(text_of(value)?),
         "append_system_prompt" => Change::AppendSystemPrompt(text_of(value)?),
+        "context_recovery" => {
+            if !value.is_object() {
+                return Err("context_recovery takes an object of recovery texts".into());
+            }
+            Change::ContextRecovery(
+                serde_json::from_value::<ContextRecovery>(value.clone()).map_err(|err| {
+                    format!("context_recovery takes an object of recovery texts: {err}")
+                })?,
+            )
+        }
         "subagents" => Change::Subagents(flag(value)?),
         "mcp" => Change::Mcp(flag(value)?),
         "autoremove" => Change::Autoremove(flag(value)?),
@@ -426,6 +436,32 @@ mod tests {
 
     use omni_core::providers::test as double;
     use omni_core::testing::scratch_home;
+
+    #[test]
+    fn recovery_settings_fill_missing_defaults_and_reject_non_text_values() {
+        let Change::ContextRecovery(recovery) = change_from(
+            "context_recovery",
+            &json!({"limit_message": "Save pending work."}),
+        )
+        .unwrap() else {
+            panic!("expected context recovery settings");
+        };
+        assert_eq!(
+            recovery,
+            ContextRecovery {
+                limit_message: "Save pending work.".into(),
+                ..ContextRecovery::default()
+            }
+        );
+        for value in [json!(null), json!(false), json!([]), json!("text")] {
+            assert!(change_from("context_recovery", &value).is_err());
+        }
+        for field in ["limit_message", "new_session_message", "transcript_header"] {
+            for value in [json!(null), json!(1), json!(false), json!([]), json!({})] {
+                assert!(change_from("context_recovery", &json!({field: value})).is_err());
+            }
+        }
+    }
 
     #[test]
     fn normal_session_ids_are_preserved() {

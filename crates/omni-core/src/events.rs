@@ -49,6 +49,7 @@ pub const SCHEMA_VERSION: i64 = 1;
 /// Error classifications used by [`Event::kind`].
 pub const AUTH: &str = "auth";
 pub const LIMIT: &str = "limit";
+pub const CONTEXT_LIMIT: &str = "context_limit";
 pub const UNAVAILABLE: &str = "unavailable";
 pub const CRASH: &str = "crash";
 
@@ -253,6 +254,21 @@ pub fn classify(text: &str) -> &'static str {
     let has = |wanted: &[&str]| words.iter().any(|word| wanted.contains(word));
     let phrase = |wanted: &[&str]| words.windows(wanted.len()).any(|window| window == wanted);
 
+    if has(&["contextwindowexceeded", "contextlengthexceeded"])
+        || phrase(&["context", "window", "exceeded"])
+        || phrase(&["context", "length", "exceeded"])
+        || phrase(&["context", "limit"])
+        || phrase(&["prompt", "is", "too", "long"])
+        || phrase(&["prompt", "too", "long"])
+        || phrase(&["input", "is", "too", "long"])
+        || phrase(&["maximum", "context", "length"])
+        || phrase(&["exceeds", "the", "context", "window"])
+        || (phrase(&["context", "window"]) && phrase(&["ran", "out", "of", "room"]))
+        || (has(&["tokens"]) && phrase(&["exceeds", "the", "maximum"]))
+    {
+        return CONTEXT_LIMIT;
+    }
+
     if has(&[
         "auth",
         "oauth",
@@ -367,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn failures_are_sorted_into_the_four_kinds_that_matter() {
+    fn failures_are_sorted_into_the_kinds_that_matter() {
         assert_eq!(classify("OAuth token expired, please sign in"), AUTH);
         assert_eq!(classify("authentication_error"), AUTH);
         assert_eq!(classify("429 Too Many Requests"), LIMIT);
@@ -376,6 +392,18 @@ mod tests {
         assert_eq!(classify("stream disconnected"), UNAVAILABLE);
         assert_eq!(classify("model_not_found"), UNAVAILABLE);
         assert_eq!(classify("thread 'main' panicked"), CRASH);
+        for error in [
+            "context_window_exceeded",
+            "contextWindowExceeded",
+            "context_length_exceeded",
+            "Prompt is too long",
+            "maximum context length is 100 tokens",
+            "input token count exceeds the maximum number of tokens allowed",
+            "Codex ran out of room in the model's context window.",
+        ] {
+            assert_eq!(classify(error), CONTEXT_LIMIT, "{error}");
+        }
+        assert_eq!(classify("IAM authorization warning"), AUTH);
     }
 
     #[test]

@@ -5,7 +5,7 @@ declared twice — once in Rust, once here. Anything that could drift is pinned.
 """
 
 from omni import Event
-from omni.events import ALWAYS, AUTH, CRASH, LIMIT, UNAVAILABLE
+from omni.events import ALWAYS, AUTH, CONTEXT_LIMIT, CRASH, LIMIT, UNAVAILABLE
 
 
 def test_the_wire_strings_are_pinned():
@@ -33,7 +33,9 @@ def test_the_wire_strings_are_pinned():
 
 def test_the_failure_kinds_are_pinned():
     """What a caller branches on when a turn goes wrong."""
-    assert (AUTH, LIMIT, UNAVAILABLE, CRASH) == ("auth", "limit", "unavailable", "crash")
+    assert (AUTH, LIMIT, CONTEXT_LIMIT, UNAVAILABLE, CRASH) == (
+        "auth", "limit", "context_limit", "unavailable", "crash"
+    )
 
 
 def test_events_round_trip_through_the_session_file():

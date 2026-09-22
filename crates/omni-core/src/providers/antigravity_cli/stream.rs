@@ -149,8 +149,12 @@ impl Stream {
         self.called.clear();
         let mut events = Vec::new();
         if result["status"].as_str() == Some("ERROR") {
-            let said = result["error"].as_str().unwrap_or("agy turn failed");
-            let mut event = Event::failure(classify(said), said)
+            let said = match &result["error"] {
+                Value::String(text) => text.clone(),
+                Value::Null => "agy turn failed".into(),
+                other => other.to_string(),
+            };
+            let mut event = Event::failure(classify(&said), said)
                 .from(super::NAME)
                 .about(&self.model);
             if !self.conversation.is_empty() {
@@ -321,6 +325,22 @@ mod tests {
         assert!(events[1].is(event_type::END));
         assert_eq!(events[0].native["conversation_id"], "c9");
         assert_eq!(events[1].native["conversation_id"], "c9");
+    }
+
+    #[test]
+    fn a_structured_context_error_is_not_replaced_with_a_generic_error() {
+        let mut stream = Stream::default();
+        let error = json!({"code": "context_window_exceeded", "message": "Request failed"});
+        let events = feed(
+            &mut stream,
+            json!({"event": "result", "result": {"status": "ERROR", "error": error}}),
+        );
+        assert_eq!(events[0].kind, "context_limit");
+        assert_eq!(
+            serde_json::from_str::<Value>(&events[0].error).unwrap(),
+            error
+        );
+        assert!(events[1].is(event_type::END));
     }
 
     #[test]

@@ -304,6 +304,34 @@ impl Meta {
         })
     }
 
+    /// Commit a recovery transition and replace any superseded message together.
+    /// Resetting context forgets native ids, never the durable conversation log.
+    pub(crate) fn recover(
+        &mut self,
+        state: Value,
+        history_start: Option<i64>,
+        message: Option<&PendingMessage>,
+        superseded_id: Option<&str>,
+    ) -> io::Result<()> {
+        self.commit(|data| {
+            data.insert("context_recovery_state".into(), state);
+            if let Some(since) = history_start {
+                data.insert("history_start".into(), json!(since));
+                data.insert(PROVIDERS.into(), json!({}));
+            }
+            let pending = data
+                .get_mut(PENDING)
+                .and_then(Value::as_array_mut)
+                .expect("pending is an array");
+            if let Some(id) = superseded_id {
+                pending.retain(|value| value.get("id").and_then(Value::as_str) != Some(id));
+            }
+            if let Some(message) = message {
+                pending.insert(0, json!(message));
+            }
+        })
+    }
+
     /// Pending messages in the exact order they were acknowledged.
     pub fn pending(&self) -> Vec<PendingMessage> {
         self.data
@@ -507,6 +535,74 @@ mod tests {
 
         meta.complete(&first.id).unwrap();
         assert_eq!(Meta::open("s").pending(), vec![second]);
+    }
+
+    #[test]
+    fn recovery_replaces_only_the_superseded_message_and_preserves_queue_order() {
+        let _home = scratch_home("meta-recovery-replace");
+        let mut meta = Meta::open("s");
+        let retry = meta.enqueue("same").unwrap();
+        let first = meta.enqueue("same").unwrap();
+        let second = meta.enqueue("later").unwrap();
+        meta.bind("codex-app-server", "full-native").unwrap();
+        meta.set_setting("system_prompt", json!("Save pending work."))
+            .unwrap();
+        let handoff = PendingMessage {
+            id: "handoff".into(),
+            text: "Save the transcript.".into(),
+        };
+        let state = json!({"stage": "Handoff", "message_id": handoff.id, "retry": ""});
+
+        meta.recover(state.clone(), Some(42), Some(&handoff), Some(&retry.id))
+            .unwrap();
+
+        let reopened = Meta::open("s");
+        assert_eq!(meta.data, reopened.data);
+        assert_eq!(reopened.pending(), vec![handoff, first, second]);
+        assert_eq!(reopened.get("context_recovery_state"), Some(&state));
+        assert_eq!(reopened.get("history_start"), Some(&json!(42)));
+        assert_eq!(reopened.native("codex-app-server"), (String::new(), -1));
+        assert_eq!(
+            reopened.setting_str("system_prompt").as_deref(),
+            Some("Save pending work.")
+        );
+    }
+
+    #[test]
+    fn a_failed_recovery_replacement_preserves_the_retry_and_all_previous_state() {
+        let _home = scratch_home("meta-recovery-rollback");
+        let mut meta = Meta::open("s");
+        let retry = meta.enqueue("original task").unwrap();
+        meta.enqueue("queued work").unwrap();
+        meta.bind("codex-app-server", "full-native").unwrap();
+        meta.recover(
+            json!({"stage": "Retrying", "message_id": retry.id, "retry": retry.text}),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let before = meta.data.clone();
+        let blocker = paths::home().join("not-a-directory");
+        fs::write(&blocker, "a regular file").unwrap();
+        meta.path = blocker.join("s.meta.json");
+        let handoff = PendingMessage {
+            id: "handoff".into(),
+            text: "Save the transcript.".into(),
+        };
+
+        assert!(
+            meta.recover(
+                json!({"stage": "Handoff", "message_id": handoff.id, "retry": ""}),
+                Some(42),
+                Some(&handoff),
+                Some(&retry.id),
+            )
+            .is_err()
+        );
+
+        assert_eq!(meta.data, before);
+        assert_eq!(Meta::open("s").data, before);
     }
 
     #[test]

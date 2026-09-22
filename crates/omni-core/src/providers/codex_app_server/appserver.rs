@@ -171,7 +171,12 @@ impl AppServer {
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("failed");
-            return Err(AppServerError(format!("{method}: {said}")));
+            let details = error
+                .get("data")
+                .filter(|value| !value.is_null())
+                .map(|value| format!(" ({value})"))
+                .unwrap_or_default();
+            return Err(AppServerError(format!("{method}: {said}{details}")));
         }
         Ok(message.get("result").cloned().unwrap_or(Value::Null))
     }
@@ -199,7 +204,7 @@ mod tests {
         let (exit_tx, exit_rx) = mpsc::channel();
         let script = r#"
             IFS= read -r request
-            printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"message":"not initialized"}}'
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"message":"not initialized","data":{"detail":"server unavailable"}}}'
             cat >/dev/null
         "#;
         let result = AppServer::start(
@@ -214,6 +219,7 @@ mod tests {
 
         let err = result.err().expect("initialize should be rejected");
         assert!(err.to_string().contains("initialize: not initialized"));
+        assert!(err.to_string().contains("server unavailable"));
         assert_eq!(
             exit_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
             0,

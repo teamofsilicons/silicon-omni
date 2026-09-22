@@ -21,8 +21,8 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::events::{AUTH, CRASH, Event, LIMIT, UNAVAILABLE, event_type};
 use crate::choose::{Ask, Pick, resolve};
+use crate::events::{AUTH, CONTEXT_LIMIT, CRASH, Event, LIMIT, UNAVAILABLE, classify, event_type};
 use crate::providers;
 use crate::providers::base::{CONFIRMED, CONFIRMED_AS, Config, Delivery, Emit, GENERATION, Runner};
 use crate::session::{Meta, PendingMessage, Store};
@@ -48,6 +48,9 @@ const SUBAGENTS: &str = "subagents";
 const MCP: &str = "mcp";
 const AUTOREMOVE: &str = "autoremove";
 const CWD: &str = "cwd";
+const CONTEXT_RECOVERY: &str = "context_recovery";
+const RECOVERY: &str = "context_recovery_state";
+const HISTORY_START: &str = "history_start";
 /// Correlates a durable opening event with the pending message it consumed.
 /// Kept in `extra` so older readers remain schema-compatible.
 const MESSAGE_ID: &str = "message_id";
@@ -78,6 +81,43 @@ pub enum Change {
     Mcp(bool),
     Autoremove(bool),
     Cwd(String),
+    ContextRecovery(ContextRecovery),
+}
+
+/// Text sent to the model when a full native session must be replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContextRecovery {
+    pub limit_message: String,
+    pub new_session_message: String,
+    pub transcript_header: String,
+}
+
+impl Default for ContextRecovery {
+    fn default() -> Self {
+        Self {
+            limit_message: "Session Limit was hit. New Session will be started".into(),
+            new_session_message:
+                "New session was auto-started due to context limit. Check on pending work.".into(),
+            transcript_header: crate::translate::SEED_HEADER.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum RecoveryStage {
+    Compacting,
+    Retrying,
+    Handoff,
+    Continuing,
+    Resuming,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Recovery {
+    stage: RecoveryStage,
+    message_id: String,
+    retry: String,
 }
 
 /// What the conductor is asked to do. Everything arrives here, in order.
@@ -236,6 +276,10 @@ pub struct Chat {
     turn_failed: Option<String>,
     ask: Ask,
     config: Config,
+    context_recovery: ContextRecovery,
+    recovery: Option<Recovery>,
+    compaction_deadline: Option<std::time::Instant>,
+    history_start: i64,
     sink: Emit,
     inbox: Receiver<Wake>,
     post: Sender<Wake>,
@@ -319,6 +363,38 @@ impl Chat {
                 .load_error()
                 .map(|error| format!("loading existing session metadata: {error}"));
         }
+        let recovery = match meta
+            .get(RECOVERY)
+            .map(|value| serde_json::from_value::<Recovery>(value.clone()))
+            .transpose()
+        {
+            Ok(recovery) => recovery,
+            Err(error) => {
+                startup_error.get_or_insert_with(|| format!("loading context recovery: {error}"));
+                None
+            }
+        };
+        if recovery.as_ref().is_some_and(|recovery| {
+            recovery.stage != RecoveryStage::Compacting && recovery.message_id.is_empty()
+        }) {
+            startup_error
+                .get_or_insert_with(|| "loading context recovery: message id is missing".into());
+        }
+        let history_start = match meta.get(HISTORY_START) {
+            None => 0,
+            Some(value) => match value
+                .as_i64()
+                .filter(|since| *since >= 0 && *since <= store.seq().saturating_add(1))
+            {
+                Some(since) => since,
+                None => {
+                    startup_error.get_or_insert_with(|| {
+                        "loading context recovery: invalid history boundary".into()
+                    });
+                    0
+                }
+            },
+        };
         if startup_error.is_none() {
             startup_error = meta
                 .reconcile(&delivered)
@@ -369,6 +445,10 @@ impl Chat {
             .setting(AUTOREMOVE)
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
+        let context_recovery = meta
+            .setting(CONTEXT_RECOVERY)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
         let mut initial_settings = serde_json::Map::new();
         initial_settings.insert(ACTIVE_PROVIDERS.into(), json!(providers));
         initial_settings.insert(STORED_ASK.into(), json!(ask));
@@ -381,6 +461,7 @@ impl Chat {
         initial_settings.insert(MCP.into(), json!(mcp));
         initial_settings.insert(AUTOREMOVE.into(), json!(autoremove));
         initial_settings.insert(CWD.into(), json!(config.cwd));
+        initial_settings.insert(CONTEXT_RECOVERY.into(), json!(context_recovery));
         if startup_error.is_none() {
             startup_error = meta
                 .initialize_settings(initial_settings)
@@ -417,6 +498,10 @@ impl Chat {
             turn_failed: None,
             ask,
             config,
+            context_recovery,
+            recovery,
+            compaction_deadline: None,
+            history_start,
             sink,
             inbox,
             post,
@@ -455,7 +540,37 @@ impl Chat {
         }
         self.settle(|state| state.status = WAITING.into());
         let _ = self.post.send(Wake::Launch);
-        while let Ok(wake) = self.inbox.recv() {
+        loop {
+            let wake = if self
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.stage == RecoveryStage::Compacting)
+            {
+                let remaining = self
+                    .compaction_deadline
+                    .unwrap_or_else(std::time::Instant::now)
+                    .saturating_duration_since(std::time::Instant::now());
+                let received = if remaining.is_zero() {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                } else {
+                    self.inbox.recv_timeout(remaining)
+                };
+                match received {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        self.start_handoff();
+                        self.publish();
+                        if self.terminal {
+                            self.reject_waiters("session persistence failed");
+                            return;
+                        }
+                        continue;
+                    }
+                    other => other.ok(),
+                }
+            } else {
+                self.inbox.recv().ok()
+            };
+            let Some(wake) = wake else { break };
             match wake {
                 Wake::Stop => break,
                 Wake::Launch => self.launch_once(),
@@ -597,6 +712,15 @@ impl Chat {
                 self.config = config;
                 ("cwd", json!({"cwd": self.config.cwd}))
             }
+            Change::ContextRecovery(messages) => {
+                self.save_setting(
+                    CONTEXT_RECOVERY,
+                    json!(messages),
+                    "saving context recovery texts",
+                )?;
+                self.context_recovery = messages;
+                (CONTEXT_RECOVERY, json!(self.context_recovery))
+            }
         };
         let extra = extra.as_object().cloned().unwrap_or_default();
         if self.record(Event::config(what).extras(extra)).is_none() {
@@ -629,6 +753,10 @@ impl Chat {
             return;
         }
         self.launched_once = true;
+        if self.recovery.is_some() {
+            self.resume_recovery();
+            return;
+        }
         let ready = self.runner.as_ref().is_some_and(|runner| runner.alive()) && !self.stale();
         if (ready || self.attempt("starting up")) && !self.terminal {
             self.flush();
@@ -636,6 +764,13 @@ impl Chat {
     }
 
     fn absorb(&mut self, mut event: Event) {
+        // Adapters retain their native error payloads. Recognize context
+        // exhaustion even when an older adapter labelled it a generic crash.
+        if event.is(event_type::ERROR)
+            && classify(&format!("{} {}", event.error, json!(event.extra))) == CONTEXT_LIMIT
+        {
+            event.kind = CONTEXT_LIMIT.into();
+        }
         let event_epoch = event
             .extra
             .get(RUNNER_EPOCH)
@@ -696,7 +831,12 @@ impl Chat {
         } else if event.is(event_type::END) {
             self.in_turn = false;
             self.turn_recorded = false;
+            if self.recovery.is_some() {
+                self.recovery_ended(&event);
+                return;
+            }
             match self.turn_failed.take() {
+                Some(kind) if kind == CONTEXT_LIMIT => self.recover_context(true),
                 // The provider ended the turn on an error it could not get past.
                 Some(kind) if self.autoremove => self.failed(&event.provider, &kind),
                 _ => self.finish_turn(),
@@ -708,7 +848,29 @@ impl Chat {
                 .and_then(|value| value.as_bool())
                 != Some(true)
         {
+            if self.recovery.is_some() {
+                if !matches!(
+                    event.kind.as_str(),
+                    CONTEXT_LIMIT | CRASH | AUTH | LIMIT | UNAVAILABLE
+                ) {
+                    return;
+                }
+                self.turn_failed = Some(event.kind.clone());
+                if matches!(event.kind.as_str(), CRASH | AUTH) {
+                    if self
+                        .recovery
+                        .as_ref()
+                        .is_some_and(|r| r.stage == RecoveryStage::Compacting)
+                    {
+                        self.start_handoff();
+                    } else {
+                        self.recovery_failed(&event.error);
+                    }
+                }
+                return;
+            }
             match event.kind.as_str() {
+                CONTEXT_LIMIT => self.turn_failed = Some(CONTEXT_LIMIT.into()),
                 AUTH => self.unauthenticated(&event),
                 CRASH => self.failed(&event.provider, CRASH),
                 kind if ENDS_THE_TURN.contains(&kind) && self.in_turn => {
@@ -933,6 +1095,9 @@ impl Chat {
     /// Put the runner down and end the turn it was in the middle of.
     fn close_turn(&mut self, provider: &str, extra: serde_json::Value) -> bool {
         if let Some(mut runner) = self.runner.take() {
+            if self.in_turn {
+                runner.interrupt();
+            }
             runner.stop();
         }
         self.runner_epoch = None;
@@ -956,6 +1121,309 @@ impl Chat {
         self.in_turn = false;
         self.settle(|state| state.status = WAITING.into());
         true
+    }
+
+    /// Try the provider's own compaction once, then a text-only handoff once.
+    fn recover_context(&mut self, delivered: bool) {
+        let retry = if delivered {
+            self.store
+                .history(self.history_start)
+                .into_iter()
+                .filter(|event| {
+                    event.turn == self.turn
+                        && matches!(
+                            event.event_type.as_str(),
+                            event_type::START | event_type::INJECTED
+                        )
+                })
+                .map(|event| event.text)
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        } else {
+            String::new()
+        };
+        let recovery = Recovery {
+            stage: RecoveryStage::Compacting,
+            message_id: String::new(),
+            retry,
+        };
+        if !self.save_recovery(Some(recovery), None, None) {
+            return;
+        }
+        self.turn_failed = None;
+        match self.runner.as_mut().map(|runner| runner.compact()) {
+            Some(Ok(true)) => {
+                self.compaction_deadline =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(180));
+                self.in_turn = true;
+                self.settle(|state| state.status = BUSY.into());
+                self.record(Event::config("context_compaction"));
+            }
+            _ => self.start_handoff(),
+        }
+    }
+
+    fn save_recovery(
+        &mut self,
+        recovery: Option<Recovery>,
+        since: Option<i64>,
+        message: Option<PendingMessage>,
+    ) -> bool {
+        let superseded = recovery
+            .as_ref()
+            .filter(|next| next.stage == RecoveryStage::Handoff)
+            .and_then(|_| self.recovery.as_ref())
+            .filter(|old| old.stage == RecoveryStage::Retrying && !old.retry.is_empty())
+            .map(|old| old.message_id.clone());
+        if let Err(error) = self.meta.recover(
+            json!(recovery),
+            since,
+            message.as_ref(),
+            superseded.as_deref(),
+        ) {
+            self.persistence_failed("saving context recovery", &error);
+            return false;
+        }
+        if let Some(id) = superseded {
+            self.outbox.retain(|message| message.id != id);
+            self.awaiting.retain(|message| message.id != id);
+        }
+        self.recovery = recovery;
+        if !self
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.stage == RecoveryStage::Compacting)
+        {
+            self.compaction_deadline = None;
+        }
+        if let Some(since) = since {
+            self.history_start = since;
+        }
+        if let Some(message) = message {
+            self.outbox.push_front(message);
+        }
+        true
+    }
+
+    fn recovery_message(&mut self, stage: RecoveryStage, text: String, fresh: bool) {
+        if fresh {
+            let provider = self.blamed("");
+            if !self.close_turn(&provider, json!({"context_limit": true})) {
+                return;
+            }
+            for (_, mut parked) in std::mem::take(&mut self.parked) {
+                parked.runner.stop();
+            }
+        }
+        let message = PendingMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+        };
+        let retry = if stage == RecoveryStage::Retrying {
+            message.text.clone()
+        } else {
+            String::new()
+        };
+        let recovery = Recovery {
+            stage,
+            message_id: message.id.clone(),
+            retry,
+        };
+        let since = fresh.then(|| self.store.seq() + 1);
+        if !self.save_recovery(Some(recovery), since, Some(message)) {
+            return;
+        }
+        self.turn_failed = None;
+        self.settle(|state| state.status = BUSY.into());
+        self.dispatch_queued();
+    }
+
+    fn start_handoff(&mut self) {
+        // Superseded retries are retired atomically with the new handoff;
+        // their original user text is already in this transcript.
+        let history: Vec<Event> = self
+            .store
+            .history(self.history_start)
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event.event_type.as_str(),
+                    event_type::START | event_type::INJECTED | event_type::TEXT
+                )
+            })
+            .collect();
+        let transcript =
+            crate::translate::flatten(&history, &self.context_recovery.transcript_header);
+        let text = if transcript.is_empty() {
+            self.context_recovery.limit_message.clone()
+        } else {
+            format!("{transcript}\n\n{}", self.context_recovery.limit_message)
+        };
+        self.recovery_message(RecoveryStage::Handoff, text, true);
+    }
+
+    fn recovery_ended(&mut self, event: &Event) {
+        self.in_turn = false;
+        self.turn_recorded = false;
+        let recovery = self.recovery.clone().expect("recovery is active");
+        let failure = self.turn_failed.take();
+        let failed = failure.is_some()
+            || event
+                .extra
+                .get("interrupted")
+                .and_then(|value| value.as_bool())
+                == Some(true)
+            || event
+                .extra
+                .get("status")
+                .and_then(|value| value.as_str())
+                .is_some_and(|status| matches!(status, "failed" | "interrupted"));
+        match recovery.stage {
+            RecoveryStage::Compacting if failed => self.start_handoff(),
+            RecoveryStage::Compacting => {
+                if recovery.retry.is_empty() {
+                    if let Some(message) = self.outbox.front() {
+                        let retry = Recovery {
+                            stage: RecoveryStage::Retrying,
+                            message_id: message.id.clone(),
+                            retry: String::new(),
+                        };
+                        if self.save_recovery(Some(retry), None, None) {
+                            self.dispatch_queued();
+                        }
+                    } else if self.save_recovery(None, None, None) {
+                        self.finish_turn();
+                    }
+                } else {
+                    self.recovery_message(RecoveryStage::Retrying, recovery.retry, false);
+                }
+            }
+            RecoveryStage::Retrying if failure.as_deref() == Some(CONTEXT_LIMIT) => {
+                self.start_handoff()
+            }
+            _ if failed => self.recovery_failed(
+                failure
+                    .as_deref()
+                    .unwrap_or("recovery turn did not complete"),
+            ),
+            RecoveryStage::Handoff => {
+                self.recovery_message(
+                    RecoveryStage::Continuing,
+                    self.context_recovery.new_session_message.clone(),
+                    true,
+                );
+            }
+            RecoveryStage::Continuing | RecoveryStage::Resuming if !self.outbox.is_empty() => {
+                // A rejected queued message gets one attempt in the clean
+                // session; otherwise one oversized input could rotate forever.
+                let retry = Recovery {
+                    stage: RecoveryStage::Resuming,
+                    message_id: self.outbox.front().expect("checked above").id.clone(),
+                    ..recovery
+                };
+                if self.save_recovery(Some(retry), None, None) {
+                    self.dispatch_queued();
+                }
+            }
+            _ => {
+                if self.save_recovery(None, None, None)
+                    && (self.runner.as_ref().is_some_and(|runner| runner.alive())
+                        || self.attempt("resuming recovered session"))
+                {
+                    self.finish_turn();
+                }
+            }
+        }
+    }
+
+    fn recovery_failed(&mut self, why: &str) {
+        let provider = self.blamed("");
+        if !self.close_turn(&provider, json!({"context_recovery_failed": true}))
+            || !self.save_recovery(None, None, None)
+        {
+            return;
+        }
+        // No recursive recovery: even the text alone can exceed a window.
+        self.record(
+            Event::failure(CONTEXT_LIMIT, why)
+                .from(&provider)
+                .with("recovery_failed", true),
+        );
+        self.refresh();
+    }
+
+    /// A durable handoff must still rotate if the daemon stopped after END.
+    fn resume_recovery(&mut self) {
+        let recovery = self.recovery.clone().expect("recovery is active");
+        if recovery.stage == RecoveryStage::Compacting {
+            self.start_handoff();
+            return;
+        }
+        if !self
+            .outbox
+            .iter()
+            .any(|message| message.id == recovery.message_id)
+        {
+            let events = self.store.events(self.history_start);
+            if let Some(opening) = events.iter().find(|event| {
+                event.extra.get(MESSAGE_ID).and_then(|value| value.as_str())
+                    == Some(&recovery.message_id)
+            }) {
+                if let Some(end) = events.iter().find(|event| {
+                    event.seq > opening.seq
+                        && event.turn == opening.turn
+                        && event.is(event_type::END)
+                        && event.extra.get("late").and_then(|value| value.as_bool()) != Some(true)
+                }) {
+                    if end
+                        .extra
+                        .get("interrupted")
+                        .and_then(|value| value.as_bool())
+                        == Some(true)
+                    {
+                        self.start_handoff();
+                        return;
+                    }
+                    self.turn_failed = events
+                        .iter()
+                        .filter(|event| {
+                            event.seq > opening.seq
+                                && event.seq < end.seq
+                                && event.turn == opening.turn
+                                && event.extra.get("late").and_then(|value| value.as_bool())
+                                    != Some(true)
+                        })
+                        .fold(None, |failure, event| {
+                            if event.is(event_type::ERROR)
+                                && matches!(
+                                    event.kind.as_str(),
+                                    CONTEXT_LIMIT | CRASH | AUTH | LIMIT | UNAVAILABLE
+                                )
+                                && event
+                                    .extra
+                                    .get("willRetry")
+                                    .and_then(|value| value.as_bool())
+                                    != Some(true)
+                            {
+                                Some(event.kind.clone())
+                            } else if MODEL_EVENTS.contains(&event.event_type.as_str()) {
+                                None
+                            } else {
+                                failure
+                            }
+                        });
+                    self.recovery_ended(end);
+                } else {
+                    // Keep text produced during the interrupted recovery too;
+                    // repeating only its opening would lose that progress.
+                    self.start_handoff();
+                }
+                return;
+            }
+        }
+        if self.attempt("resuming context recovery") {
+            self.flush();
+        }
     }
 
     fn finish_turn(&mut self) {
@@ -1056,6 +1524,11 @@ impl Chat {
             return;
         }
         while let Some(message) = self.outbox.front().cloned() {
+            if self.recovery.as_ref().is_some_and(|recovery| {
+                recovery.stage == RecoveryStage::Compacting || recovery.message_id != message.id
+            }) {
+                return;
+            }
             let was_in_turn = self.in_turn;
             let sent = match self.runner.as_mut() {
                 Some(runner) => runner.send(&message.text),
@@ -1069,7 +1542,27 @@ impl Chat {
                         .as_ref()
                         .map(|r| r.name().to_string())
                         .unwrap_or_default();
-                    self.blocked(&format!("{name} would not take the message: {why}"));
+                    if classify(&why) == CONTEXT_LIMIT {
+                        if self
+                            .record(Event::failure(CONTEXT_LIMIT, why).from(&name))
+                            .is_none()
+                        {
+                            return;
+                        }
+                        if self.recovery.is_some() {
+                            self.turn_failed = Some(CONTEXT_LIMIT.into());
+                            self.recovery_ended(&Event::new(event_type::END));
+                        } else if self.in_turn {
+                            // An active native turn still owns its END.
+                            self.turn_failed = Some(CONTEXT_LIMIT.into());
+                        } else {
+                            self.recover_context(false);
+                        }
+                    } else if self.recovery.is_some() {
+                        self.recovery_failed(&why);
+                    } else {
+                        self.blocked(&format!("{name} would not take the message: {why}"));
+                    }
                     return;
                 }
             };
@@ -1521,7 +2014,7 @@ impl Chat {
     /// messages. A fresh native id has no such knowledge and receives all of it.
     fn history_for(&self, provider: &str, since: i64, continuing_native: bool) -> Vec<Event> {
         self.store
-            .history(since)
+            .history(since.max(self.history_start))
             .into_iter()
             .filter(|event| {
                 !continuing_native
@@ -1762,6 +2255,10 @@ impl Chat {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "chat_recovery_tests.rs"]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {

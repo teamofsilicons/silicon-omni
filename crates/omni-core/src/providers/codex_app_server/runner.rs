@@ -240,6 +240,21 @@ impl RunnerTrait for Runner {
             .map_err(|err| err.to_string())
     }
 
+    fn compact(&mut self) -> Result<bool, String> {
+        let Some(shared) = &self.shared else {
+            return Err("codex is not running".into());
+        };
+        // This only starts compaction; its turn/completed notification ends it.
+        shared
+            .call(
+                "thread/compact/start",
+                json!({"threadId": self.thread}),
+                Duration::from_secs(60),
+            )
+            .map(|_| true)
+            .map_err(|err| err.to_string())
+    }
+
     /// A live thread accepts history the same way a fresh one does, so coming
     /// back to a warm Codex costs one call and no restart.
     fn catch_up(&mut self, history: &[Event]) -> bool {

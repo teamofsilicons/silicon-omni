@@ -208,6 +208,12 @@ pub trait Runner: Send {
     /// Hand a user message to the CLI, starting or joining a turn.
     fn send(&mut self, text: &str) -> Result<Delivery, String>;
 
+    /// Start native context compaction. `true` waits for the usual ERROR/END
+    /// events; `false` means this adapter cannot compact in its current mode.
+    fn compact(&mut self) -> Result<bool, String> {
+        Ok(false)
+    }
+
     /// Change model or effort in place, between turns.
     ///
     /// Return `true` if the running process took it. Returning `false` (the

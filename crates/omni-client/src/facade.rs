@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    Ask, Client, DaemonInfo, Error, Event, LiveSession, OpenOptions, Pick, Result, Session,
-    Setting, Snapshot,
+    Ask, Client, ContextRecovery, DaemonInfo, Error, Event, LiveSession, OpenOptions, Pick, Result,
+    Session, Setting, Snapshot,
 };
 
 /// Daemon-owned Chat state using the canonical public field names.
@@ -319,6 +319,11 @@ impl Chat {
     pub fn append_system_prompt_file(&mut self, path: impl AsRef<Path>) -> Result<&mut Self> {
         let text = read_text(path.as_ref())?;
         self.append_system_prompt(text)
+    }
+
+    /// Customize the persisted recovery messages. Use `ContextRecovery::default()` to reset.
+    pub fn set_context_recovery(&mut self, recovery: ContextRecovery) -> Result<&mut Self> {
+        self.change("context_recovery", json!(recovery))
     }
 
     pub fn enable_subagents(&mut self) -> Result<&mut Self> {
@@ -723,6 +728,7 @@ mod tests {
                 json!([
                     {"what": "model", "value": {"how": "intelligence", "value": 7}},
                     {"what": "mcp", "value": false},
+                    {"what": "context_recovery", "value": ContextRecovery::default()},
                 ])
             );
             send_json(
@@ -781,6 +787,8 @@ mod tests {
         chat.model(Ask::intelligence(7))
             .unwrap()
             .disable_mcp()
+            .unwrap()
+            .set_context_recovery(ContextRecovery::default())
             .unwrap()
             .start()
             .unwrap();

@@ -22,7 +22,6 @@ Usage:
   silicon-omni dial [PROVIDER...]                     show the 0–10 dial
   silicon-omni account PROVIDER ACTION [CODE]         inspect or authenticate an account
   silicon-omni daemon start|status|stop               manage the persistent daemon
-  silicon-omni web [connect|status|revoke|stop]       a localhost door for websites
   silicon-omni ping                                   show daemon information
   silicon-omni request OP [JSON]                      make a low-level protocol call
 
@@ -48,11 +47,6 @@ its largest models; Antigravity has none and ignores it.
 
 Account actions:
   status (default), installed, limits, start-auth, finish-auth CODE, forget
-
-Web bridge:
-  `omni web` serves omni over http://127.0.0.1:1998 so a website can use it,
-  and `omni web connect` prints the single-use code that lets one in. See
-  `omni web help`.
 
 Environment:
   OMNI_HOME           state directory (default: ~/.omni)
@@ -118,7 +112,6 @@ fn run(mut args: Vec<String>) -> Result<()> {
         }
         "ping" => print_value(&serde_json::to_value(Client::connect()?.ping()?)?),
         "daemon" => daemon(args)?,
-        "web" => omni_web::main(args).map_err(CliError)?,
         "providers" => providers(args)?,
         "dial" => dial(args)?,
         "sessions" => sessions(no_args(command, args)?)?,
@@ -829,6 +822,14 @@ mod tests {
         assert!(parse_setting("intelligence", "44").is_err(), "0 to 10");
         assert_eq!(parse_setting("mcp", "false").unwrap(), json!(false));
         assert_eq!(
+            parse_setting(
+                "context_recovery",
+                r#"{"limit_message":"Save work first."}"#
+            )
+            .unwrap(),
+            json!({"limit_message": "Save work first."})
+        );
+        assert_eq!(
             parse_setting("providers", "claude-code-cli, codex-app-server").unwrap(),
             json!(["claude-code-cli", "codex-app-server"])
         );
@@ -867,13 +868,13 @@ mod tests {
     }
 
     #[test]
-    fn the_web_bridge_is_listed_where_somebody_would_look_for_it() {
-        assert!(HELP.contains("silicon-omni web"));
-        assert!(HELP.contains("omni web connect"));
-        assert!(
-            HELP.contains("`so` and `omni` executables"),
-            "0.8 brings the omni name back, because `omni web` is what it starts"
+    fn the_removed_web_command_is_unavailable() {
+        assert!(!HELP.contains("web"));
+        assert_eq!(
+            run(vec!["web".into()]).unwrap_err().to_string(),
+            "unknown command \"web\"; try `silicon-omni help`"
         );
+        assert!(HELP.contains("`so` and `omni` executables"));
     }
 
     #[test]

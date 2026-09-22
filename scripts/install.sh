@@ -300,8 +300,7 @@ if [ -n "$NEEDS_RELOAD" ]; then
     printf '\n'
 fi
 printf '  %somni chat my-session%s        talk to it here\n' "$BOLD" "$OFF"
-printf '  %somni web%s                    serve it to a website on localhost\n' "$BOLD" "$OFF"
-printf '  %somni web connect%s            a code to let one site in\n' "$BOLD" "$OFF"
+printf '  %somni daemon status%s          check the daemon\n' "$BOLD" "$OFF"
 printf '\n'
 printf '  %sYou bring the CLIs: claude, codex, or agy. omni offers%s\n' "$DIM" "$OFF"
 printf '  %sonly the ones installed and signed in — `omni providers`.%s\n' "$DIM" "$OFF"

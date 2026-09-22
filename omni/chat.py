@@ -193,6 +193,27 @@ class Chat:
     def append_system_prompt_file(self, path: str) -> None:
         self.append_system_prompt(open(path, encoding="utf-8").read())
 
+    def set_context_recovery(
+        self,
+        *,
+        limit_message: str | None = None,
+        new_session_message: str | None = None,
+        transcript_header: str | None = None,
+    ) -> "Chat":
+        """Customize context-limit recovery text. Omitted fields use defaults.
+
+        Applied at the next turn boundary and persisted with session settings.
+        Call without arguments to restore all defaults.
+        """
+        self.change("context_recovery", {
+            name: text for name, text in (
+                ("limit_message", limit_message),
+                ("new_session_message", new_session_message),
+                ("transcript_header", transcript_header),
+            ) if text is not None
+        })
+        return self
+
     def disable_subagents(self) -> None:
         """No provider-side subagents, so only the workers you define get used.
 
@@ -226,7 +247,7 @@ class Chat:
         durably; every other failure only sets the provider aside while the
         chat is live, and it is back when the session reopens or the providers
         are set again. Turn it off and the error is reported and the turn
-        simply ends.
+        simply ends. Context-window recovery remains enabled.
         """
         self.change("autoremove", False)
 

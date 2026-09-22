@@ -228,7 +228,7 @@ def handle(event):
 | `Event.TOOL.RESULT` | `tool`, `id`, `result`, `ok` |
 | `Event.END` | the turn is over |
 | `Event.INJECTED` | `text` — a message that landed mid-turn |
-| `Event.ERROR` | `error`, `kind` — `auth` / `limit` / `unavailable` / `crash` from the model or its CLI, plus `stderr` (CLI chatter), `omni` (the engine itself) and `handler` (your callback raised) |
+| `Event.ERROR` | `error`, `kind` — `auth` / `limit` / `context_limit` / `unavailable` / `crash` from the model or its CLI, plus `stderr` (CLI chatter), `omni` (the engine itself) and `handler` (your callback raised) |
 | `Event.SWITCH_PROVIDER` | `provider`, `extra['from']` |
 | `Event.NEW_SESSION` | `provider`, `extra['native']` — the provider's own session id |
 | `Event.CONFIG` | `text` — a setting changed |
@@ -518,10 +518,51 @@ failed, omni says so and the next `send` tries them all once more.
 chat.disable_autoremoving_unauthenticated_providers()
 ```
 
-Turn it off and the error is reported and the turn simply ends, whatever the cause.
-Either way the failed turn is not replayed: it is in the log, so the next provider
+Turn it off and these errors are reported and the turn simply ends. Context-window
+recovery, described below, remains enabled.
+For these failures the turn is not replayed: it is in the log, so the next provider
 reads it, but nothing re-runs a tool that may already have run. The one exception is
 a message Claude never acknowledged taking, which is handed to the next provider.
+
+### When the context window fills
+
+`ERROR` / `context_limit` is separate from rate limits and authentication failures.
+Omni first asks the provider to compact its native session and retries the pending
+work. If compaction is unsupported or fails, it opens a fresh provider session with
+the same prompt and settings, sends the user and assistant text from the conversation
+(without tool calls or results), and appends:
+
+> Session Limit was hit. New Session will be started
+
+That turn can save notes or finish handoff work according to the system prompt. When
+it ends, Omni closes that provider session and starts another with:
+
+> New session was auto-started due to context limit. Check on pending work.
+
+The Omni session id and durable event log stay the same. Recovery text is configurable
+and persists with the other settings:
+
+```python
+chat.set_context_recovery(
+    limit_message="Save pending work before this session ends.",
+    new_session_message="Read the saved notes and resume pending work.",
+    transcript_header="Earlier conversation, for reference:",
+)
+```
+
+Omitted fields use their defaults; `chat.set_context_recovery()` resets all three.
+Rust uses `chat.set_context_recovery(ContextRecovery { ... })`, with
+`..ContextRecovery::default()` for omitted fields. The same setting is available
+over the wire and CLI:
+
+```sh
+so set my-session context_recovery '{"limit_message":"Save pending work."}'
+```
+
+Codex uses its native [`thread/compact/start` endpoint](https://learn.chatgpt.com/docs/app-server#trigger-thread-compaction). Claude and Antigravity use
+the fallback in Omni's current isolated runner modes. A failed handoff or a message
+that still exceeds the clean session's window stops recovery with an error;
+Omni never silently truncates the conversation or loops through fresh sessions.
 
 ## Limits
 

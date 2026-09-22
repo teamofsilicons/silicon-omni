@@ -5,6 +5,7 @@ ordering, settings, switching and failover — driven through a real daemon over
 real socket.
 """
 
+import json
 import threading
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from omni import Event, Inference, NoAnswer
 from omni.chat import Chat
 from omni.client import DaemonError, Link
 from omni.providers import test as double
+from omni.shared.paths import meta_file
 
 # ------------------------------------------------------------- vocabulary
 
@@ -125,6 +127,40 @@ def test_unauthenticated_provider_autoremoval_has_both_toggles(name):
     chat.disable_autoremoving_unauthenticated_providers()
     chat.enable_autoremoving_unauthenticated_providers()
     assert chat.pending == [("autoremove", False), ("autoremove", True)]
+
+
+def test_context_recovery_texts_are_configurable_durable_and_validated(name):
+    double.install(name)
+    chat = Inference.load_or_create_session(name, [name])
+    texts = {
+        "limit_message": "Save pending work before leaving.",
+        "new_session_message": "Resume pending work from the saved notes.",
+        "transcript_header": "Earlier messages:",
+    }
+    assert chat.set_context_recovery(**texts) is chat
+    assert chat.pending == [("context_recovery", texts)]
+    chat.start()
+    chat.stop()
+
+    restored = Inference.load_or_create_session(name).start()
+    try:
+        assert json.loads(meta_file(name).read_text())["settings"]["context_recovery"] == texts
+        with pytest.raises(DaemonError, match="context_recovery"):
+            restored.change("context_recovery", {"limit_message": 3})
+        assert json.loads(meta_file(name).read_text())["settings"]["context_recovery"] == texts
+
+        restored.set_context_recovery(limit_message="")
+        defaults = json.loads(meta_file(name).read_text())["settings"]["context_recovery"]
+        assert defaults["limit_message"] == ""
+        assert defaults["new_session_message"] == (
+            "New session was auto-started due to context limit. Check on pending work."
+        )
+        assert defaults["transcript_header"] != texts["transcript_header"]
+        restored.set_context_recovery()
+        defaults = json.loads(meta_file(name).read_text())["settings"]["context_recovery"]
+        assert defaults["limit_message"] == "Session Limit was hit. New Session will be started"
+    finally:
+        restored.stop()
 
 
 def test_a_chat_context_detaches_instead_of_stopping(name):

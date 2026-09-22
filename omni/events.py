@@ -48,8 +48,8 @@ class Event:
     ``TOOL.RESULT``     ``tool``, ``id``, ``result``, ``ok``
     ``END``             ``extra`` — stop reason, usage, if the provider says
     ``INJECTED``        ``text`` — a message that landed mid-turn
-    ``ERROR``           ``error``, ``kind`` — one of ``auth`` / ``limit`` /
-                        ``unavailable`` / ``crash`` from the model or its CLI,
+    ``ERROR``           ``error``, ``kind`` — ``auth`` / ``limit`` /
+                        ``context_limit`` / ``unavailable`` / ``crash`` from the model or its CLI,
                         ``stderr`` for CLI chatter, ``omni`` when the engine
                         itself failed, ``handler`` when your callback raised
     ``SWITCH_PROVIDER`` ``provider`` (the new one), ``extra['from']``
@@ -129,5 +129,6 @@ DEFAULTS = vars(Event(type=""))
 #: Error classifications used by ``Event.kind``.
 AUTH = "auth"
 LIMIT = "limit"
+CONTEXT_LIMIT = "context_limit"
 UNAVAILABLE = "unavailable"
 CRASH = "crash"

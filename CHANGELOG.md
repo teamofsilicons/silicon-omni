@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0
+
+**Omni is a daemon with Rust and Python clients.** Removed the browser HTTP
+bridge, pairing and browser authentication layer, JavaScript/TypeScript client,
+and `omni web` command. The terminal client still ships with the daemon and
+Python package under `silicon-omni`, `so`, and `omni`.
+
+**Context limits now recover the conversation.** Provider context-limit errors
+keep their classification instead of becoming generic failures. Omni first asks
+the provider to compact when supported (Codex uses `thread/compact/start`). If
+compaction is unavailable or fails, a fresh provider session receives the
+conversation's text without tool calls, with the same system prompt and settings,
+and gets a final turn to save pending work. After that turn, another fresh session
+checks on pending work. Recovery preserves durable history and queued messages,
+resumes after a daemon restart, and stops repeated overflows instead of looping.
+The transcript header, limit message, and continuation message are configurable
+through `context_recovery` in Python, Rust, and the terminal client.
+
 ## 0.8.0
 
 **A provider that fails no longer keeps the chat.** A crash, a rate limit or an

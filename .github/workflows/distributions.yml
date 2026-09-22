@@ -154,10 +154,9 @@ jobs:
               "crates/omni-client/Cargo.toml",
               "crates/omni-core/Cargo.toml",
               "crates/omni-daemon/Cargo.toml",
-              "crates/omni-web/Cargo.toml",
-              "crates/omni-web/src/lib.rs",
           }
           present = {name.removeprefix(f"{root}/") for name in names}
+          assert not any(name.startswith(("web/", "crates/omni-web/")) for name in present), "sdist includes the removed browser interface"
           missing = required - present
           assert not missing, f"sdist is missing release inputs: {sorted(missing)}"
           PY

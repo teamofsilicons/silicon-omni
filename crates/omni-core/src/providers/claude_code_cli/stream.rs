@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::events::{Event, classify, event_type};
 use crate::providers::base;
@@ -41,6 +41,54 @@ impl Stream {
                 .insert("session_id".into(), json!(self.session_id));
         }
         event
+    }
+
+    /// SDK errors carry raw details and machine-readable codes alongside the
+    /// displayed text. Either can be the only indication of context overflow.
+    fn failure(&self, data: &Value, text: &str, fallback: &str) -> Event {
+        let mut extra: Map<String, Value> = [
+            "error",
+            "error_details",
+            "api_error",
+            "api_error_code",
+            "api_error_params",
+            "api_error_status",
+            "terminal_reason",
+            "subtype",
+        ]
+        .into_iter()
+        .filter_map(|key| {
+            data.get(key)
+                .filter(|value| !value.is_null())
+                .map(|value| (key.to_string(), value.clone()))
+        })
+        .collect();
+        if let Some(error) = data["message"]
+            .get("error")
+            .filter(|error| !error.is_null())
+        {
+            extra.insert("message_error".into(), error.clone());
+        }
+        let error = if text.is_empty() {
+            [
+                "error_details",
+                "error",
+                "message_error",
+                "api_error_code",
+                "api_error",
+                "terminal_reason",
+            ]
+            .into_iter()
+            .map(|key| flatten_content(extra.get(key)))
+            .find(|text| !text.is_empty())
+            .unwrap_or_else(|| fallback.to_string())
+        } else {
+            text.to_string()
+        };
+        Event::failure(classify(&format!("{error} {}", json!(extra))), error)
+            .from(super::NAME)
+            .about(&self.model)
+            .extras(extra)
     }
 
     /// Register a line before it reaches the pipe. The runner holds the stream
@@ -99,25 +147,7 @@ impl Stream {
                 .filter(|text| !text.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
-            let error = if error.is_empty() {
-                data.get("error")
-                    .and_then(Value::as_str)
-                    .or_else(|| message.get("error").and_then(Value::as_str))
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or("Claude returned an API error")
-                    .to_string()
-            } else {
-                error
-            };
-            let classification = format!(
-                "{} {} {}",
-                error,
-                data.get("error").and_then(Value::as_str).unwrap_or(""),
-                message.get("error").and_then(Value::as_str).unwrap_or("")
-            );
-            let mut event = Event::failure(classify(&classification), error)
-                .from(super::NAME)
-                .about(&self.model);
+            let mut event = self.failure(data, &error, "Claude returned an API error");
             if !message_id.is_empty() {
                 event.native.insert("message_id".into(), json!(message_id));
             }
@@ -259,27 +289,27 @@ impl Stream {
     fn finished(&mut self, data: &Value) -> Vec<Event> {
         let mut events = Vec::new();
         let subtype = data.get("subtype").and_then(Value::as_str).unwrap_or("");
-        let result = data.get("result").and_then(Value::as_str).unwrap_or("");
         if data
             .get("is_error")
             .and_then(Value::as_bool)
             .unwrap_or(false)
             || subtype != "success"
+            // This native terminal reason means the loop failed, even if a
+            // producer omits the redundant is_error flag.
+            || data["terminal_reason"].as_str() == Some("prompt_too_long")
         {
-            let status = data
-                .get("api_error_status")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let error = match (result, subtype) {
-                ("", "") => "unknown error",
-                ("", other) => other,
-                (said, _) => said,
+            let result = ["result", "errors", "error"]
+                .into_iter()
+                .map(|key| flatten_content(data.get(key)))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let fallback = match subtype {
+                "" => "unknown error",
+                "success" => "Claude returned an API error",
+                other => other,
             };
-            events.push(
-                Event::failure(classify(&format!("{subtype} {result} {status}")), error)
-                    .from(super::NAME)
-                    .about(&self.model),
-            );
+            events.push(self.failure(data, &result, fallback));
         }
         events.push(
             self.event(event_type::END)
@@ -590,6 +620,142 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, crate::events::AUTH);
         assert!(events[1].is(event_type::END));
+    }
+
+    #[test]
+    fn execution_errors_keep_their_details_for_context_limit_recovery() {
+        let mut stream = Stream::default();
+        let events = feed(
+            &mut stream,
+            json!({
+                "type": "result", "subtype": "error_during_execution", "is_error": true,
+                "errors": ["Prompt is too long", "context_window_exceeded"]
+            }),
+        );
+        assert_eq!(events[0].kind, "context_limit");
+        assert_eq!(
+            events[0].error,
+            "Prompt is too long\ncontext_window_exceeded"
+        );
+        assert!(events[1].is(event_type::END));
+
+        let events = feed(
+            &mut stream,
+            json!({
+                "type": "assistant", "is_api_error_message": true,
+                "error": {"code": "context_window_exceeded", "message": "Request failed"},
+                "message": {"content": [{"type": "text", "text": "Request failed"}]}
+            }),
+        );
+        assert_eq!(events[0].kind, "context_limit");
+        assert_eq!(events[0].error, "Request failed");
+    }
+
+    #[test]
+    fn native_api_error_fields_classify_without_replacing_the_displayed_message() {
+        for (field, value, kind) in [
+            (
+                "api_error_code",
+                json!("context_window_exceeded"),
+                crate::events::CONTEXT_LIMIT,
+            ),
+            (
+                "error_details",
+                json!("Prompt is too long: 250000 tokens > 200000"),
+                crate::events::CONTEXT_LIMIT,
+            ),
+            ("api_error_status", json!(401), crate::events::AUTH),
+            (
+                "api_error",
+                json!("gateway_signin_required"),
+                crate::events::AUTH,
+            ),
+        ] {
+            for mut frame in [
+                json!({
+                    "type": "assistant", "is_api_error_message": true,
+                    "error": "invalid_request",
+                    "api_error_params": {"actual_tokens": 250000},
+                    "message": {"content": [{"type": "text", "text": "Request failed"}]}
+                }),
+                json!({"type": "result", "subtype": "success", "is_error": true, "result": "Request failed"}),
+            ] {
+                frame[field] = value.clone();
+                let events = feed(&mut Stream::default(), frame.clone());
+                assert!(events[0].is(event_type::ERROR));
+                assert_eq!(events[0].kind, kind, "{frame}");
+                assert_eq!(events[0].error, "Request failed");
+                assert_eq!(events[0].extra[field], value);
+                assert!(
+                    events[0].text.is_empty(),
+                    "API errors are not replayable assistant text"
+                );
+                if frame["type"] == "result" {
+                    assert_eq!(events.len(), 2);
+                    assert!(events[1].is(event_type::END));
+                } else {
+                    assert_eq!(events.len(), 1);
+                    assert_eq!(
+                        events[0].extra["api_error_params"],
+                        frame["api_error_params"]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_error_details_supply_missing_display_text_and_keep_nested_errors() {
+        let details = "Prompt is too long: 250000 tokens > 200000";
+        for frame in [
+            json!({"type": "assistant", "is_api_error_message": true,
+                   "error": "invalid_request", "error_details": details, "message": {"content": []}}),
+            json!({"type": "result", "subtype": "success", "is_error": true,
+                   "error_details": details, "result": ""}),
+        ] {
+            let events = feed(&mut Stream::default(), frame);
+            assert_eq!(events[0].error, details);
+            assert_eq!(events[0].kind, crate::events::CONTEXT_LIMIT);
+            assert_eq!(events[0].extra["error_details"], details);
+        }
+        let events = feed(
+            &mut Stream::default(),
+            json!({
+                "type": "assistant", "is_api_error_message": true, "error": "invalid_request",
+                "message": {"error": "context_window_exceeded", "content": []}
+            }),
+        );
+        assert_eq!(events[0].kind, crate::events::CONTEXT_LIMIT);
+        assert_eq!(events[0].extra["error"], "invalid_request");
+        assert_eq!(events[0].extra["message_error"], "context_window_exceeded");
+    }
+
+    #[test]
+    fn a_prompt_too_long_terminal_reason_is_a_failure_with_or_without_the_flag() {
+        for is_error in [Value::Null, json!(false), json!(true)] {
+            let mut frame = json!({
+                "type": "result", "subtype": "success", "result": "",
+                "terminal_reason": "prompt_too_long"
+            });
+            if !is_error.is_null() {
+                frame["is_error"] = is_error;
+            }
+            let events = feed(&mut Stream::default(), frame);
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].kind, crate::events::CONTEXT_LIMIT);
+            assert_eq!(events[0].error, "prompt_too_long");
+            assert_eq!(events[0].extra["terminal_reason"], "prompt_too_long");
+            assert!(events[1].is(event_type::END));
+        }
+        let events = feed(
+            &mut Stream::default(),
+            json!({
+                "type": "result", "subtype": "success", "is_error": false,
+                "terminal_reason": "completed", "result": "The previous context_window_exceeded error is fixed."
+            }),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is(event_type::END));
     }
 
     #[test]

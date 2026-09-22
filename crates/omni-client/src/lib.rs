@@ -68,8 +68,9 @@ use std::time::{Duration, Instant};
 
 #[deprecated(note = "use `event_type` or `Event::TEXT` style constants")]
 pub use omni_core::events::event_type as kind;
-pub use omni_core::events::{AUTH, CRASH, LIMIT, UNAVAILABLE, event_type};
+pub use omni_core::chat::ContextRecovery;
 pub use omni_core::choose::{Ask, Pick};
+pub use omni_core::events::{AUTH, CONTEXT_LIMIT, CRASH, LIMIT, UNAVAILABLE, event_type};
 pub use omni_core::wire::{Frame, PROTOCOL, Request};
 use omni_core::wire::{Incoming, Reply, read_line};
 pub use omni_core::{Event, Snapshot};

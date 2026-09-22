@@ -218,6 +218,11 @@ portable conversation state.
 Failure behavior is part of the architecture, not cleanup after the happy path:
 
 - A runner that refuses a message leaves it queued and records an error.
+- Context exhaustion first tries native compaction. If unavailable or unsuccessful,
+  a fresh native session receives only user/assistant text and a configurable
+  handoff notice. After that turn completes, another fresh session receives the
+  configurable continuation message. Recovery stages and replay boundaries persist
+  in metadata; the full Omni log remains intact. Repeated failure stops recovery.
 - A provider that will not launch is set aside and the next on the dial is tried. When
   nothing is left the session returns to `waiting`; it never hangs in `busy`.
 - A crash or lost login closes an open turn with a synthetic `END`. A rate limit or an
@@ -251,7 +256,7 @@ Failure behavior is part of the architecture, not cleanup after the happy path:
 ## Provider boundary
 
 `Account` is global and session-free: installed state, authentication, login, and quota.
-`Runner` drives one provider session: start, send, re-tune, catch up, interrupt, stop,
+`Runner` drives one provider session: start, send, compact, re-tune, catch up, interrupt, stop,
 and emit events. Everything portable lives above those two traits.
 
 Adapters are under `crates/omni-core/src/providers/`. The shipped `test` provider uses

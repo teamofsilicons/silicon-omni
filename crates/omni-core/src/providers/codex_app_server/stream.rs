@@ -116,20 +116,7 @@ impl Stream {
     fn finished(&self, turn: &Value) -> Vec<Event> {
         let mut events = Vec::new();
         if turn.get("status").and_then(Value::as_str) == Some("failed") {
-            let error = turn.get("error").cloned().unwrap_or(Value::Null);
-            let said = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("turn failed");
-            let info = error
-                .get("codexErrorInfo")
-                .map(Value::to_string)
-                .unwrap_or_default();
-            let mut event = Event::failure(classify(&format!("{said} {info}")), said)
-                .from(super::NAME)
-                .about(&self.model);
-            event.extra = error.as_object().cloned().unwrap_or_default();
-            events.push(event);
+            events.push(self.failure(&turn["error"], "turn failed"));
         }
         events.push(
             self.event(event_type::END)
@@ -142,23 +129,29 @@ impl Stream {
 
     /// A mid-turn error. Retryable ones do not end the turn.
     fn failed(&self, params: &Value) -> Vec<Event> {
-        let said = params
+        let error = params
+            .get("error")
+            .filter(|error| error.is_object())
+            .unwrap_or(params);
+        vec![self.failure(error, "codex error").with(
+            "willRetry",
+            params.get("willRetry").cloned().unwrap_or(Value::Null),
+        )]
+    }
+
+    fn failure(&self, error: &Value, fallback: &str) -> Event {
+        let said = error
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("codex error");
-        let info = params
+            .unwrap_or(fallback);
+        let info = error
             .get("codexErrorInfo")
             .map(Value::to_string)
             .unwrap_or_default();
-        vec![
-            Event::failure(classify(&format!("{said} {info}")), said)
-                .from(super::NAME)
-                .about(&self.model)
-                .with(
-                    "willRetry",
-                    params.get("willRetry").cloned().unwrap_or(Value::Null),
-                ),
-        ]
+        Event::failure(classify(&format!("{said} {info}")), said)
+            .from(super::NAME)
+            .about(&self.model)
+            .extras(error.as_object().cloned().unwrap_or_default())
     }
 }
 
@@ -315,6 +308,67 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, crate::events::UNAVAILABLE);
         assert_eq!(events[0].extra["willRetry"], true);
+    }
+
+    #[test]
+    fn nested_context_errors_keep_the_message_code_and_details() {
+        let mut stream = Stream::new("model");
+        for code in ["contextWindowExceeded", "context_window_exceeded"] {
+            let error = json!({
+                "message": "Codex ran out of room in the model's context window.",
+                "codexErrorInfo": code,
+                "additionalDetails": "Start a new thread or clear earlier history before retrying."
+            });
+            let events = stream.feed(
+                "error",
+                &json!({
+                    "threadId": "thread-1", "turnId": "turn-1",
+                    "error": error, "willRetry": false
+                }),
+            );
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].error, error["message"]);
+            assert_eq!(events[0].kind, crate::events::CONTEXT_LIMIT);
+            assert_eq!(events[0].extra["codexErrorInfo"], code);
+            assert_eq!(
+                events[0].extra["additionalDetails"],
+                error["additionalDetails"]
+            );
+            assert_eq!(events[0].extra["willRetry"], false);
+            assert_eq!(events[0].native["thread_id"], "thread-1");
+            assert_eq!(events[0].native["turn_id"], "turn-1");
+
+            let finished = stream.feed(
+                "turn/completed",
+                &json!({"turn": {"status": "failed", "error": error}}),
+            );
+            assert_eq!(finished[0].kind, events[0].kind);
+            assert_eq!(finished[0].error, events[0].error);
+            assert!(finished[1].is(event_type::END));
+        }
+        let events = stream.feed(
+            "error",
+            &json!({"error": {"message": "Request rejected", "codexErrorInfo": "contextWindowExceeded"}}),
+        );
+        assert_eq!(events[0].kind, crate::events::CONTEXT_LIMIT);
+    }
+
+    #[test]
+    fn a_compaction_item_waits_for_the_turn_to_end() {
+        let mut stream = Stream::default();
+        let item = json!({"item": {"type": "contextCompaction", "id": "compact-1"}});
+        for method in ["item/started", "item/completed"] {
+            let events = stream.feed(method, &item);
+            assert!(events.iter().all(|event| !event.is(event_type::END)));
+        }
+        let events = stream.feed(
+            "turn/completed",
+            &json!({"turn": {"id": "compact-turn", "status": "completed"}}),
+        );
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is(event_type::END));
+        assert_eq!(events[0].native["turn_id"], "compact-turn");
+        assert_eq!(events[0].extra["status"], "completed");
     }
 
     #[test]
