@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.1
 
 **A Codex chat no longer gets stuck busy after a message lands mid-turn.**
 Codex's `turn/start` steers into a turn that is already running instead of
