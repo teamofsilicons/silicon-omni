@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**A Codex chat no longer gets stuck busy after a message lands mid-turn.**
+Codex's `turn/start` steers into a turn that is already running instead of
+opening a new one. omni counted every `turn/start` as a separate later turn, so
+when a second message arrived before `turn/started` (or after `turn/steer` was
+refused), the chat waited for an END that Codex never sent. The chat then stayed
+busy with no turn running. Once a setting changed, such as a refreshed system
+prompt, every later message was queued and never delivered, with no event or
+error. The runner now reads the turn id Codex returns, and a message that
+landed in the running turn counts as part of it.
+
 ## 0.9.0
 
 **Omni is a daemon with Rust and Python clients.** Removed the browser HTTP

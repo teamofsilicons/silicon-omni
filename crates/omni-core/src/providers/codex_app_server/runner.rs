@@ -82,11 +82,29 @@ pub fn flags(config: &Config) -> Vec<String> {
     out
 }
 
+/// Where a `turn/start` landed, from the turn id Codex answered with.
+///
+/// `turn/start` is start-or-steer: when a turn is already running, Codex folds
+/// the input into it and answers with that turn's id rather than opening one.
+/// Calling that the next turn would leave the chat waiting for an END that
+/// never comes. `open` is the turn the route knew of before the call, and
+/// `started` the last one `turn/start` answered with — `turn/started` can trail
+/// that answer, so a second send in the gap sees no open turn at all.
+fn landed(turn: &str, open: &str, started: &str) -> Delivery {
+    if !turn.is_empty() && (turn == open || turn == started) {
+        Delivery::Immediate
+    } else {
+        Delivery::NextTurn
+    }
+}
+
 pub struct Runner {
     config: Config,
     emit: Emit,
     shared: Option<Arc<Shared>>,
     thread: String,
+    /// The turn the last `turn/start` answered with. See [`landed`].
+    started: String,
 }
 
 impl Runner {
@@ -96,6 +114,7 @@ impl Runner {
             emit,
             shared: None,
             thread: String::new(),
+            started: String::new(),
         }
     }
 
@@ -217,8 +236,8 @@ impl RunnerTrait for Runner {
         let Some(shared) = &self.shared else {
             return Err("codex is not running".into());
         };
-        let turn = shared.turn_of(&self.thread);
-        if !turn.is_empty() && self.steer(shared, text, &turn) {
+        let open = shared.turn_of(&self.thread);
+        if !open.is_empty() && self.steer(shared, text, &open) {
             return Ok(Delivery::Immediate);
         }
         let mut body = json!({
@@ -234,10 +253,13 @@ impl RunnerTrait for Runner {
                 body[key] = json!(value);
             }
         }
-        shared
+        let answer = shared
             .call("turn/start", body, Duration::from_secs(60))
-            .map(|_| Delivery::NextTurn)
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        let turn = answer["turn"]["id"].as_str().unwrap_or_default();
+        let delivery = landed(turn, &open, &self.started);
+        self.started = turn.to_string();
+        Ok(delivery)
     }
 
     fn compact(&mut self) -> Result<bool, String> {
@@ -351,6 +373,26 @@ mod tests {
             }),
             "two isolation settings must not share one server"
         );
+    }
+
+    #[test]
+    fn a_turn_start_codex_steers_lands_in_the_running_turn() {
+        // Sent before `turn/started` for the turn just opened reached us.
+        assert_eq!(landed("t1", "", "t1"), Delivery::Immediate);
+        // `turn/steer` refused, but `turn/start` still folded it in.
+        assert_eq!(landed("t1", "t1", "t0"), Delivery::Immediate);
+    }
+
+    #[test]
+    fn a_turn_start_that_opens_a_turn_is_the_next_one() {
+        assert_eq!(landed("t2", "", "t1"), Delivery::NextTurn);
+        // The open turn finished between reading it and Codex hearing us.
+        assert_eq!(landed("t2", "t1", "t1"), Delivery::NextTurn);
+    }
+
+    #[test]
+    fn an_answer_without_a_turn_id_is_never_taken_for_the_open_turn() {
+        assert_eq!(landed("", "", ""), Delivery::NextTurn);
     }
 
     #[test]
