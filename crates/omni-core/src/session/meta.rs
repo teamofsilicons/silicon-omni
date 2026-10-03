@@ -364,6 +364,26 @@ impl Meta {
         Ok(message)
     }
 
+    /// Retry unfinished turns ahead of newer work, with fresh delivery ids.
+    pub(crate) fn retry(
+        &mut self,
+        turns: &std::collections::VecDeque<Vec<String>>,
+    ) -> io::Result<Vec<PendingMessage>> {
+        let messages: Vec<PendingMessage> = turns.iter().flatten()
+            .map(|text| PendingMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                text: text.clone(),
+            })
+            .collect();
+        self.commit(|data| {
+            let pending = data.get_mut(PENDING)
+                .and_then(Value::as_array_mut)
+                .expect("pending is an array");
+            pending.splice(0..0, messages.iter().map(|message| json!(message)));
+        })?;
+        Ok(messages)
+    }
+
     /// Remove one message only after its correlated opening event is durable.
     pub fn complete(&mut self, id: &str) -> io::Result<()> {
         self.commit(|data| {

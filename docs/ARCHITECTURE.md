@@ -168,7 +168,10 @@ boundary: direct native acceptance for Codex/agy, or Claude's matching replay ec
 That event retains the public `extra.message_id`; after its JSONL append is durable the
 matching metadata entry is removed. A crash in between is reconciled exactly by id,
 including when adjacent messages have identical text. A refused delivery stays queued
-for retry and is never both seeded and sent.
+for retry and is not seeded before its initial delivery. If an accepted turn fails,
+its unfinished messages are queued with fresh delivery ids ahead of newer work and
+resent after automatic failover. Failed attempts remain in the history supplied to
+the replacement provider.
 
 ## Warm providers and switching
 

@@ -243,7 +243,8 @@ class Chat:
         On by default: a CLI that has lost its login, crashed, ended the turn
         on a rate limit or an outage, or will not start cannot finish the
         turn, so omni takes it off this chat's dial and resolves the same ask
-        again over whoever is left. A lost login is removed from the chat
+        again over whoever is left, then resends the unfinished messages.
+        A lost login is removed from the chat
         durably; every other failure only sets the provider aside while the
         chat is live, and it is back when the session reopens or the providers
         are set again. Turn it off and the error is reported and the turn

@@ -501,6 +501,8 @@ default omni closes the turn, takes that provider off the dial, resolves the **s
 ask** again over whoever is left, and carries on there — you get an `ERROR`, a
 `CONFIG`/`provider_removed` saying why, and a `SWITCH_PROVIDER`, and the conversation
 continues on another vendor's model with everything so far already in its head.
+Omni resends the unfinished turn's messages to that model, ahead of newer queued
+messages, so the failed request receives an answer without another `send`.
 
 | `why` | what happened | for how long |
 |---|---|---|
@@ -520,9 +522,9 @@ chat.disable_autoremoving_unauthenticated_providers()
 
 Turn it off and these errors are reported and the turn simply ends. Context-window
 recovery, described below, remains enabled.
-For these failures the turn is not replayed: it is in the log, so the next provider
-reads it, but nothing re-runs a tool that may already have run. The one exception is
-a message Claude never acknowledged taking, which is handed to the next provider.
+Failed attempts and any partial output remain in the history. Resending the request
+can repeat work from the failed turn; completed turns are not retried. Messages
+Claude never acknowledged taking keep their original place in the delivery queue.
 
 ### When the context window fills
 

@@ -355,6 +355,9 @@ def test_losing_a_login_moves_the_chat_to_whoever_is_left(pair):
         if event.type == Event.CONFIG and event.text == "provider_removed"
     ]
     assert len(removed) == 1 and removed[0].provider == big
+    assert [event.text for event in chat.history() if event.type == Event.TEXT] == [
+        "echo: hello", "echo: again"
+    ]
 
     chat.send("[recall]")
     assert settled(chat)
@@ -387,6 +390,9 @@ def test_a_crash_moves_the_chat_to_whoever_is_left(pair):
     ]
     assert len(removed) == 1 and removed[0].provider == big
     assert removed[0].extra["why"] == "crash"
+    assert [event.text for event in chat.history() if event.type == Event.TEXT] == [
+        "echo: hello", "echo: again"
+    ]
 
     chat.send("[recall]")
     assert settled(chat)

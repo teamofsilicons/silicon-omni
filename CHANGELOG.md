@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.2
+
+**Failed messages are retried after automatic failover.** When a provider loses
+its login, crashes, or ends a turn on a rate limit or outage, omni switches to
+another provider and resends the unfinished messages before newer queued work.
+Direct delivery refusals now take the same failover path. Completed native turns
+are not retried, unconfirmed deliveries remain in order, and saved retries survive
+a daemon restart. Provider-list changes made during the failed turn are honored.
+Disabling automatic failover also disables automatic replay of delivered messages.
+
+Failed attempts and partial output stay in the history, so a retry can repeat work
+from the unfinished turn.
+
 ## 0.9.1
 
 **A Codex chat no longer gets stuck busy after a message lands mid-turn.**

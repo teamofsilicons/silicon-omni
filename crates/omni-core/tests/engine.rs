@@ -259,6 +259,8 @@ fn losing_a_login_moves_the_chat_to_whoever_is_left() {
     assert_eq!(removed.len(), 1);
     assert_eq!(removed[0].provider, "beta");
     assert_eq!(session.snapshot().providers, vec!["alpha"]);
+    assert_eq!(double::running("alpha").unwrap().sent(), vec!["again"]);
+    assert_eq!(session.said(), vec!["echo: hello", "echo: again"]);
 
     session.send("[recall]");
     assert!(session.settle());
@@ -314,6 +316,12 @@ fn a_provider_that_fails_the_turn_is_set_aside_and_the_chat_moves_on() {
         assert_eq!(removed[0].extra["why"], fault);
         assert_eq!(session.snapshot().providers, vec!["alpha"], "{fault}");
         assert_eq!(session.snapshot().provider, "alpha", "{fault}");
+        assert_eq!(
+            double::running("alpha").unwrap().sent(),
+            vec!["again"],
+            "{fault}: the failed message starts work on the replacement"
+        );
+        assert_eq!(session.said(), vec!["echo: hello", "echo: again"], "{fault}");
         let moved = session
             .log()
             .into_iter()
@@ -369,6 +377,28 @@ fn a_set_aside_provider_is_back_when_the_providers_are_set_again() {
 }
 
 #[test]
+fn a_failed_message_follows_provider_changes_queued_during_its_turn() {
+    for fault in [AUTH, CRASH] {
+        let session = harness::two(&format!("changed-during-failure-{fault}"));
+        session.set(Change::Model(Ask::intelligence(10)));
+        session.send("hello");
+        assert!(session.settle());
+        double::running("beta").unwrap().set_knobs(double::Knobs {
+            autoreply: false,
+            ..Default::default()
+        });
+        session.send("again");
+        assert!(session.settle_started());
+        session.set(Change::Providers(vec!["alpha".into()]));
+        double::running("beta").unwrap().fail(fault, "", true);
+
+        assert!(session.until(|state| state.idle() && state.provider == "alpha"));
+        assert_eq!(double::running("alpha").unwrap().sent(), ["again"]);
+        assert_eq!(session.said(), ["echo: hello", "echo: again"]);
+    }
+}
+
+#[test]
 fn a_provider_that_will_not_start_is_skipped_for_the_next_on_the_dial() {
     let session = harness::two("wont-start");
     double::prepare("beta").set_knobs(double::Knobs {
@@ -413,11 +443,14 @@ fn when_every_provider_has_failed_the_next_send_tries_them_all_again() {
         vec!["test"],
         "nobody stays set aside when there is nobody else"
     );
+    assert_eq!(session.snapshot().queued, 1, "the failed message is retained");
+    assert_eq!(Meta::open("all-failed").pending()[0].text, "hello");
 
     double::running("test").unwrap().set_knobs(double::Knobs::default());
     session.send("once more");
     assert!(session.settle());
-    assert_eq!(session.said(), vec!["echo: once more"]);
+    assert_eq!(session.said(), vec!["echo: hello", "echo: once more"]);
+    assert!(Meta::open("all-failed").pending().is_empty());
 }
 
 #[test]
@@ -458,11 +491,41 @@ fn turning_the_failover_off_reports_and_stops() {
     session.set(Change::Model(Ask::intelligence(10)));
     session.send("hello");
     assert!(session.settle());
+    double::running("beta").unwrap().set_knobs(double::Knobs {
+        autoreply: false,
+        ..Default::default()
+    });
+    session.send("again");
+    assert!(session.settle_started());
     double::running("beta").unwrap().fail(AUTH, "", true);
     assert!(session.recorded(|event| event.is(event_type::ERROR) && event.kind == AUTH));
     assert!(session.settle());
     assert!(session.notices("provider_removed").is_empty());
     assert_eq!(session.snapshot().providers, vec!["beta", "alpha"]);
+    assert_eq!(session.said(), vec!["echo: hello"]);
+    assert_eq!(session.snapshot().queued, 0);
+    assert!(Meta::open("no-failover").pending().is_empty());
+}
+
+#[test]
+fn an_idle_provider_failure_does_not_replay_the_completed_message() {
+    for fault in [AUTH, CRASH] {
+        let session = harness::two(&format!("idle-failure-{fault}"));
+        session.set(Change::Model(Ask::intelligence(10)));
+        session.send("already answered");
+        assert!(session.settle());
+
+        double::running("beta").unwrap().fail(fault, "", true);
+        assert!(session.recorded(|event| {
+            event.is(event_type::CONFIG) && event.text == "provider_removed"
+        }));
+        assert!(session.settle());
+
+        assert_eq!(session.snapshot().provider, "alpha", "{fault}");
+        assert!(double::running("alpha").unwrap().sent().is_empty(), "{fault}");
+        assert_eq!(session.said(), vec!["echo: already answered"], "{fault}");
+        assert_eq!(session.snapshot().queued, 0, "{fault}");
+    }
 }
 
 #[test]

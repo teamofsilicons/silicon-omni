@@ -304,6 +304,8 @@ pub struct Chat {
     outbox: VecDeque<PendingMessage>,
     /// Written to an echo-confirming provider, but not consumed there yet.
     awaiting: VecDeque<PendingMessage>,
+    /// Delivered messages grouped by unfinished native turn, retained for failover.
+    unanswered: VecDeque<Vec<String>>,
     /// Mid-turn messages a provider accepted as later native turns.
     next_turns: usize,
     /// Recorded, not yet handed on. See [`Chat::publish`].
@@ -516,6 +518,7 @@ impl Chat {
             launched_once: false,
             outbox,
             awaiting: VecDeque::new(),
+            unanswered: VecDeque::new(),
             next_turns: 0,
             pending: Vec::new(),
             turn,
@@ -919,6 +922,7 @@ impl Chat {
             return;
         }
         self.awaiting.pop_front();
+        self.remember_message(message.text, event.is(event_type::START));
         self.turn_recorded = true;
         self.in_turn = true;
         self.settle(|state| state.status = BUSY.into());
@@ -994,10 +998,16 @@ impl Chat {
     /// providers that are left, so the conversation carries on somewhere else.
     fn unauthenticated(&mut self, event: &Event) {
         let name = self.blamed(&event.provider);
-        if !self.close_turn(&name, json!({"unauthenticated": name})) {
+        if !self.close_turn(&name, json!({"unauthenticated": name}), self.autoremove) {
             return;
         }
-        if !self.autoremove || !self.providers.contains(&name) {
+        if !self.autoremove {
+            return;
+        }
+        if !self.providers.contains(&name) {
+            if self.attempt("provider lost its login") {
+                self.flush();
+            }
             return;
         }
         let remaining: Vec<String> = self
@@ -1035,10 +1045,12 @@ impl Chat {
     /// session is next opened cold or the providers are set again.
     fn failed(&mut self, provider: &str, kind: &str) {
         let name = self.blamed(provider);
-        if !self.close_turn(&name, json!({"failed": kind})) {
+        if !self.close_turn(&name, json!({"failed": kind}), self.autoremove) {
             return;
         }
-        if !self.autoremove || !self.sideline(&name, kind) {
+        if !self.autoremove
+            || (self.providers.contains(&name) && !self.sideline(&name, kind))
+        {
             return;
         }
         if self.attempt("provider failed") {
@@ -1093,7 +1105,7 @@ impl Chat {
     }
 
     /// Put the runner down and end the turn it was in the middle of.
-    fn close_turn(&mut self, provider: &str, extra: serde_json::Value) -> bool {
+    fn close_turn(&mut self, provider: &str, extra: serde_json::Value, retry: bool) -> bool {
         if let Some(mut runner) = self.runner.take() {
             if self.in_turn {
                 runner.interrupt();
@@ -1106,6 +1118,21 @@ impl Chat {
         while let Some(text) = self.awaiting.pop_back() {
             self.outbox.push_front(text);
         }
+        if retry && !self.unanswered.is_empty() {
+            match self.meta.retry(&self.unanswered) {
+                Ok(messages) => {
+                    for message in messages.into_iter().rev() {
+                        self.outbox.push_front(message);
+                    }
+                }
+                Err(error) => {
+                    self.persistence_failed("saving failed messages for retry", &error);
+                    return false;
+                }
+            }
+        }
+        self.unanswered.clear();
+        self.turn_failed = None;
         self.next_turns = 0;
         if self.in_turn && self.turn_recorded {
             self.in_turn = false;
@@ -1119,7 +1146,9 @@ impl Chat {
             }
         }
         self.in_turn = false;
-        self.settle(|state| state.status = WAITING.into());
+        self.settle(|state| {
+            state.status = if retry && !self.outbox.is_empty() { BUSY } else { WAITING }.into();
+        });
         true
     }
 
@@ -1208,7 +1237,7 @@ impl Chat {
     fn recovery_message(&mut self, stage: RecoveryStage, text: String, fresh: bool) {
         if fresh {
             let provider = self.blamed("");
-            if !self.close_turn(&provider, json!({"context_limit": true})) {
+            if !self.close_turn(&provider, json!({"context_limit": true}), false) {
                 return;
             }
             for (_, mut parked) in std::mem::take(&mut self.parked) {
@@ -1265,6 +1294,7 @@ impl Chat {
     fn recovery_ended(&mut self, event: &Event) {
         self.in_turn = false;
         self.turn_recorded = false;
+        self.unanswered.clear();
         let recovery = self.recovery.clone().expect("recovery is active");
         let failure = self.turn_failed.take();
         let failed = failure.is_some()
@@ -1338,7 +1368,7 @@ impl Chat {
 
     fn recovery_failed(&mut self, why: &str) {
         let provider = self.blamed("");
-        if !self.close_turn(&provider, json!({"context_recovery_failed": true}))
+        if !self.close_turn(&provider, json!({"context_recovery_failed": true}), false)
             || !self.save_recovery(None, None, None)
         {
             return;
@@ -1427,6 +1457,7 @@ impl Chat {
     }
 
     fn finish_turn(&mut self) {
+        self.unanswered.pop_front();
         // agy turns a mid-flight write into a later native turn. Its first END
         // is a boundary in the stream, but not an idle moment for this chat.
         if self.next_turns > 0 {
@@ -1510,9 +1541,9 @@ impl Chat {
 
     /// Hand queued messages over — never to a runner we are about to replace.
     ///
-    /// A message is recorded only once the runner has taken it, so it is either
-    /// seeded into a provider or sent to one, and never both, and a send that
-    /// fails leaves the message queued rather than half-delivered.
+    /// An initial delivery is recorded only once the runner has taken it; a
+    /// refused send stays queued. Failover retries are new delivery attempts,
+    /// with the failed attempt retained in the conversation history.
     fn flush(&mut self) {
         if !self.runner.as_ref().is_some_and(|runner| runner.alive()) || self.stale() {
             if !self.outbox.is_empty() && !self.runner.as_ref().is_some_and(|r| r.alive()) {
@@ -1561,7 +1592,19 @@ impl Chat {
                     } else if self.recovery.is_some() {
                         self.recovery_failed(&why);
                     } else {
-                        self.blocked(&format!("{name} would not take the message: {why}"));
+                        let kind = classify(&why);
+                        let error = Event::failure(
+                            kind,
+                            format!("{name} would not take the message: {why}"),
+                        )
+                        .from(&name);
+                        if let Some(error) = self.record(error) {
+                            if kind == AUTH {
+                                self.unauthenticated(&error);
+                            } else {
+                                self.failed(&name, kind);
+                            }
+                        }
                     }
                     return;
                 }
@@ -1604,6 +1647,7 @@ impl Chat {
             if !self.complete_message(&message.id) {
                 return;
             }
+            self.remember_message(message.text, delivery == Delivery::NextTurn && was_in_turn);
             self.outbox.pop_front();
             self.turn_recorded = true;
             self.in_turn = true;
@@ -1618,6 +1662,14 @@ impl Chat {
                 self.persistence_failed("retiring a delivered user message", &error);
                 false
             }
+        }
+    }
+
+    fn remember_message(&mut self, text: String, next_turn: bool) {
+        if next_turn || self.unanswered.is_empty() {
+            self.unanswered.push_back(vec![text]);
+        } else {
+            self.unanswered.front_mut().expect("current turn").push(text);
         }
     }
 
@@ -2270,7 +2322,7 @@ mod tests {
 
     struct GeneratedRunner {
         generation: u64,
-        delivery: Delivery,
+        delivery: Result<Delivery, &'static str>,
         stopped: Arc<AtomicBool>,
     }
 
@@ -2292,7 +2344,7 @@ mod tests {
         }
 
         fn send(&mut self, _text: &str) -> Result<Delivery, String> {
-            Ok(self.delivery)
+            self.delivery.map_err(str::to_string)
         }
 
         fn stop(&mut self) {
@@ -2355,7 +2407,7 @@ mod tests {
         let stopped = Arc::new(AtomicBool::new(false));
         chat.runner = Some(Box::new(GeneratedRunner {
             generation: 1,
-            delivery,
+            delivery: Ok(delivery),
             stopped: stopped.clone(),
         }));
         chat.current = Some((
@@ -2381,6 +2433,99 @@ mod tests {
         crate::providers::base::confirmed(text, opening)
             .from(crate::providers::codex_app_server::NAME)
             .about("model")
+    }
+
+    #[test]
+    fn a_refused_delivery_switches_and_sends_the_queued_message() {
+        let _home = crate::testing::scratch_home("refused-delivery-failover");
+        let provider = crate::providers::codex_app_server::NAME;
+        for (index, error) in ["unauthenticated", "broken pipe", "rate limit", "unavailable"]
+            .into_iter()
+            .enumerate()
+        {
+            crate::providers::test::forget_all();
+            crate::providers::test::install(&["fallback".into()], &[]);
+            let name = format!("s-{index}");
+            let (mut chat, handle, _, stopped) = delivery_chat(&name, Delivery::Immediate);
+            chat.current = None;
+            chat.providers.push("fallback".into());
+            chat.runner = Some(Box::new(GeneratedRunner {
+                generation: 1,
+                delivery: Err(error),
+                stopped: stopped.clone(),
+            }));
+            chat.dispatch("answer this".into());
+
+            assert!(stopped.load(Ordering::SeqCst), "{error}");
+            assert_eq!(handle.snapshot().provider, "fallback", "{error}");
+            assert_eq!(
+                crate::providers::test::running("fallback").unwrap().sent(),
+                ["answer this"],
+                "{error}"
+            );
+            assert!(Meta::open(&name).pending().is_empty());
+            let openings: Vec<Event> = chat.store.history(0).into_iter()
+                .filter(|event| event.is(event_type::START))
+                .collect();
+            assert_eq!(openings.len(), 1, "refused delivery never became history");
+            assert_ne!(openings[0].provider, provider);
+        }
+    }
+
+    #[test]
+    fn failed_echoed_messages_retry_before_unconfirmed_and_newer_work_after_reopen() {
+        let _home = crate::testing::scratch_home("failed-echo-retry");
+        let (mut chat, _, _, _) = delivery_chat("s", Delivery::Echoed);
+        chat.current = None;
+        for opening in [event_type::START, event_type::INJECTED] {
+            chat.dispatch("same".into());
+            chat.absorb(acknowledgement("same", opening));
+        }
+        chat.dispatch("unconfirmed".into());
+        chat.enqueue("newer".into()).unwrap();
+        let original = chat.meta.pending();
+        chat.absorb(
+            Event::failure(CRASH, "broken pipe").from(crate::providers::codex_app_server::NAME),
+        );
+
+        let pending = Meta::open("s").pending();
+        assert_eq!(
+            pending.iter().map(|message| message.text.as_str()).collect::<Vec<_>>(),
+            ["same", "same", "unconfirmed", "newer"]
+        );
+        assert_eq!(pending[2..], original);
+        assert_eq!(chat.outbox.iter().cloned().collect::<Vec<_>>(), pending);
+        assert_eq!(
+            pending.iter().map(|message| &message.id).collect::<BTreeSet<_>>().len(),
+            4
+        );
+        drop(chat);
+
+        let (restored, _) = Chat::open("s", Vec::new(), Arc::new(|_| {}));
+        assert_eq!(
+            restored.meta.pending(), pending,
+            "old delivery ids must not retire retries"
+        );
+        assert_eq!(restored.outbox.into_iter().collect::<Vec<_>>(), pending);
+    }
+
+    #[test]
+    fn failover_retries_only_unfinished_native_turns() {
+        let _home = crate::testing::scratch_home("failed-next-turn-retry");
+        let (mut chat, _, _, _) = delivery_chat("s", Delivery::NextTurn);
+        chat.current = None;
+        for text in ["completed", "failed", "queued native turn"] {
+            chat.dispatch(text.into());
+        }
+        let provider = crate::providers::codex_app_server::NAME;
+        chat.absorb(Event::new(event_type::END).from(provider));
+        chat.absorb(Event::failure(LIMIT, "rate limit").from(provider));
+        chat.absorb(Event::new(event_type::END).from(provider));
+
+        assert_eq!(
+            chat.meta.pending().iter().map(|message| message.text.as_str()).collect::<Vec<_>>(),
+            ["failed", "queued native turn"]
+        );
     }
 
     #[test]
@@ -2793,7 +2938,7 @@ mod tests {
         let stopped = Arc::new(AtomicBool::new(false));
         chat.runner = Some(Box::new(GeneratedRunner {
             generation: 2,
-            delivery: Delivery::Immediate,
+            delivery: Ok(Delivery::Immediate),
             stopped: stopped.clone(),
         }));
         chat.current = Some((
@@ -2925,7 +3070,7 @@ mod tests {
             Parked {
                 runner: Box::new(GeneratedRunner {
                     generation: 1,
-                    delivery: Delivery::Immediate,
+                    delivery: Ok(Delivery::Immediate),
                     stopped: parked_stopped.clone(),
                 }),
                 epoch: None,
