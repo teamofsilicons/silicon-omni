@@ -9,7 +9,7 @@ mod account;
 mod runner;
 mod stream;
 
-pub use account::Antigravity;
+pub use account::{Antigravity, forget_models, models};
 pub use runner::Runner;
 pub use stream::Stream;
 

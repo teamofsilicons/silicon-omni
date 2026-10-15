@@ -142,10 +142,14 @@ pub fn forget(name: &str) {
     if let Some(memo) = MEMO.write().unwrap_or_else(|p| p.into_inner()).as_mut() {
         memo.remove(name);
     }
+    if name == antigravity_cli::NAME {
+        antigravity_cli::forget_models();
+    }
 }
 
 pub fn forget_everything() {
     *MEMO.write().unwrap_or_else(|p| p.into_inner()) = None;
+    antigravity_cli::forget_models();
 }
 
 /// How stale the memo is, in seconds. `None` when nothing has been asked yet.

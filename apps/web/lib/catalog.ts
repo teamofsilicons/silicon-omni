@@ -1,7 +1,7 @@
 import type { Entry, Key } from "./choose"
-import { PROVIDERS } from "./providers"
+import { canRunFast, PROVIDERS } from "./providers"
 
-export const CATEGORIES = ["fast", "code", "design", "research", "cost", "general"] as const
+export const CATEGORIES = ["fast", "code", "design", "research", "cost", "general", "writing"] as const
 export interface CatalogEntry extends Entry {
   status?: "current" | "legacy" | "restricted"
   notes?: string
@@ -36,6 +36,8 @@ export function validateCatalog(raw: unknown): Catalog {
     if (value.effort !== undefined && (typeof value.effort !== "string" || !p.efforts.includes(value.effort)))
       throw new Error(`Unsupported effort for ${value.model}.`)
     if (value.fast !== undefined && typeof value.fast !== "boolean") throw new Error("fast must be a boolean.")
+    if (value.requires_availability !== undefined && typeof value.requires_availability !== "boolean")
+      throw new Error("requires_availability must be a boolean.")
     if (value.status !== undefined && (typeof value.status !== "string" || !["current", "legacy", "restricted"].includes(value.status)))
       throw new Error("Status must be current, legacy, or restricted.")
     for (const field of ["price", "secs"]) {
@@ -53,7 +55,7 @@ export function validateCatalog(raw: unknown): Catalog {
     identities.set(id, entry)
   }
   if (!object(raw.keys) || Object.keys(raw.keys).sort().join() !== [...CATEGORIES].sort().join())
-    throw new Error("Keep the six categories: fast, code, design, research, cost, general.")
+    throw new Error(`Keep the seven categories: ${CATEGORIES.join(", ")}.`)
   for (const [id, key] of Object.entries(raw.keys)) {
     if (!object(key) || typeof key.says !== "string" || !key.says.trim() || !Array.isArray(key.picks) || !key.picks.length)
       throw new Error(`${id} needs a description and at least one recommendation.`)
@@ -67,6 +69,12 @@ export function validateCatalog(raw: unknown): Catalog {
       if (entry.status === "legacy" || entry.status === "restricted")
         throw new Error(`${id} recommends a legacy or restricted model. Choose a current model.`)
       if (pick.fast !== undefined && typeof pick.fast !== "boolean") throw new Error("fast must be a boolean.")
+      if (pick.fast && !canRunFast(entry.provider, entry.model))
+        throw new Error(`${pick.model} does not support fast mode.`)
+      if (pick.requires_availability !== undefined && typeof pick.requires_availability !== "boolean")
+        throw new Error("requires_availability must be a boolean.")
+      if (entry.requires_availability && pick.requires_availability !== true)
+        throw new Error(`${pick.model} requires confirmed model availability.`)
     }
   }
   if (!object(raw.benches) || Object.values(raw.benches).some(b => !object(b) || ["label", "short", "url"].some(k => typeof b[k] !== "string")))
@@ -76,4 +84,14 @@ export function validateCatalog(raw: unknown): Catalog {
   if (!Array.isArray(raw.caveats) || raw.caveats.some(c => typeof c !== "string"))
     throw new Error("Caveats must be a list of text notes.")
   return raw as unknown as Catalog
+}
+
+/** Read older saved catalogs and drafts while new publications require all seven keys. */
+export function upgradeCatalog(raw: unknown): Catalog {
+  if (object(raw) && object(raw.keys) && !Object.hasOwn(raw.keys, "writing") && object(raw.keys.general)) {
+    return validateCatalog({ ...raw, keys: { ...raw.keys, writing: {
+      ...raw.keys.general, says: "Write and edit clear, polished prose.",
+    } } })
+  }
+  return validateCatalog(raw)
 }

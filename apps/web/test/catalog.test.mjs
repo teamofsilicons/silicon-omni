@@ -9,12 +9,12 @@ const dataUrl = js => `data:text/javascript,${encodeURIComponent(js)}`
 const transpile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const providers = dataUrl(transpile("../lib/providers.ts"))
 const catalogUrl = dataUrl(transpile("../lib/catalog.ts").replace('from "./providers"', `from "${providers}"`))
-const { validateCatalog, modelIdentity } = await import(catalogUrl)
+const { validateCatalog, upgradeCatalog, modelIdentity } = await import(catalogUrl)
 const seed = () => JSON.parse(readFileSync(new URL("../models.json", import.meta.url), "utf8"))
 
 test("current catalog is valid and keeps unmeasured values distinct from zero", () => {
   const catalog = validateCatalog(seed())
-  assert.equal(Object.keys(catalog.keys).length, 6)
+  assert.equal(Object.keys(catalog.keys).length, 7)
   assert.ok(catalog.models.some(m => m.price === null && m.secs === null))
   assert.ok(catalog.models.some(m => m.status === "legacy"))
 })
@@ -61,13 +61,38 @@ test("invalid provider effort, negative cost, and non-finite scores are rejected
   }
 })
 
-test("all six categories and their nonempty shortlists are required", () => {
+test("all seven categories and their nonempty shortlists are required", () => {
   const catalog = seed()
   delete catalog.keys.fast
-  assert.throws(() => validateCatalog(catalog), /six categories/)
+  assert.throws(() => validateCatalog(catalog), /seven categories/)
   const other = seed()
   other.keys.cost.picks = []
   assert.throws(() => validateCatalog(other), /at least one recommendation/)
+})
+
+test("old stored catalogs gain writing on read, while publication requires an explicit writing category", () => {
+  const old = seed()
+  delete old.keys.writing
+  assert.throws(() => validateCatalog(old), /seven categories/)
+  const upgraded = upgradeCatalog(old)
+  assert.equal(Object.keys(upgraded.keys).length, 7)
+  assert.deepEqual(upgraded.keys.writing.picks, old.keys.general.picks)
+  assert.equal(upgraded.keys.writing.says, "Write and edit clear, polished prose.")
+  assert.equal(old.keys.writing, undefined, "reading must not change the stored object")
+  delete old.keys.code
+  assert.throws(() => upgradeCatalog(old), /seven categories/)
+})
+
+test("Argon availability and unsupported Sonnet fast mode cannot be mislabeled", () => {
+  const catalog = seed()
+  const argon = catalog.keys.code.picks.find(p => p.model === "gemini-4-argon-high")
+  argon.requires_availability = "yes"
+  assert.throws(() => validateCatalog(catalog), /requires_availability must/)
+  argon.requires_availability = false
+  assert.throws(() => validateCatalog(catalog), /requires confirmed model availability/)
+  argon.requires_availability = true
+  catalog.keys.fast.picks.find(p => p.model === "claude-sonnet-5-5").fast = true
+  assert.throws(() => validateCatalog(catalog), /does not support fast mode/)
 })
 
 const authMock = dataUrl(`

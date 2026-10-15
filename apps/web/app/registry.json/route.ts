@@ -38,7 +38,7 @@ export async function GET() {
       })),
       /* Three ways to ask, and what each of them takes. */
       how: [
-        { id: "key", takes: "one of `keys` below", means: "a shortlist somebody chose. the first vendor on it you are signed into answers" },
+        { id: "key", takes: "one of `keys` below, optional `available_models` provider-to-model-ID map", means: "the first eligible pick on a signed-in provider answers; gated models require reported availability" },
         { id: "intelligence", takes: "0-10, and an optional `bench`", means: "the left edge of that board, spread over eleven rungs" },
         { id: "model", takes: "`model`, optional `effort` and `fast`", means: "you already know. passed to the CLI verbatim" },
       ],
@@ -50,6 +50,7 @@ export async function GET() {
           model: m.model,
           effort: m.effort ?? "",
           fast: Boolean(m.fast),
+          ...(m.requires_availability ? { requires_availability: true } : {}),
         })),
       })),
       models: models.length,

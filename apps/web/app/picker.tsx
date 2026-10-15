@@ -116,8 +116,9 @@ export function Picker({
           {byKeyNow.shortlist.map((p, i) => (
             <span key={`${p.provider}/${p.model}/${p.effort}`} className={p.available ? "" : "picker-gone"}>
               {i > 0 ? " › " : "in order: "}
-              {p.provider}
+              {p.model}
               {p.fast ? " fast" : ""}
+              {p.requires_availability ? " (if available)" : ""}
             </span>
           ))}
         </p>

@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from "next/server"
 
-import { byCuratedIntelligence, byIntelligence, byKey, byName, unusable, type Key } from "../../lib/choose"
+import { byCuratedIntelligence, byIntelligence, byKey, byName, unusable, type AvailableModels, type Key } from "../../lib/choose"
 import { graph, VIEW } from "../../lib/graph"
 import { canRunFast, invocation, PROVIDERS } from "../../lib/providers"
 
@@ -43,6 +43,19 @@ function shown(pick: { provider: string; model: string; effort: string; fast: bo
 }
 
 async function answer(asked: Record<string, unknown>) {
+  let availableModels: AvailableModels = {}
+  if (asked.available_models !== undefined) {
+    try {
+      const raw = typeof asked.available_models === "string"
+        ? JSON.parse(asked.available_models) : asked.available_models
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) ||
+          Object.entries(raw).some(([id, models]) => !ALL.includes(id) || !Array.isArray(models) || models.length > 1000 ||
+            models.some(m => typeof m !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,119}$/.test(m)))) throw new Error()
+      availableModels = raw
+    } catch {
+      return NextResponse.json({ error: "available_models must map provider IDs to arrays of model IDs" }, { status: 400 })
+    }
+  }
   const { models, benches, keys, source, caveats, fresh } = await graph()
 
   const wanted = Array.isArray(asked.providers)
@@ -71,7 +84,7 @@ async function answer(asked: Record<string, unknown>) {
   /* A shortlist somebody chose. */
   if (asked.key) {
     const key = String(asked.key).trim().toLowerCase()
-    const found = byKey(keys as Record<string, Key>, key, providers)
+    const found = byKey(keys as Record<string, Key>, key, providers, availableModels)
     if (!found) {
       return NextResponse.json(
         {
@@ -94,7 +107,9 @@ async function answer(asked: Record<string, unknown>) {
         key: found.key,
         says: found.says,
         pick: shown(found.pick),
-        shortlist: found.shortlist.map((p) => ({ ...shown(p)!, available: p.available })),
+        shortlist: found.shortlist.map((p) => ({ ...shown(p)!, available: p.available,
+          ...(p.requires_availability ? { requires_availability: true } : {}),
+        })),
         ...foot,
       },
       head,
@@ -111,7 +126,7 @@ async function answer(asked: Record<string, unknown>) {
   }
   const askedBench = asked.bench ?? asked.benchmark
   if (askedBench === undefined || askedBench === null) {
-    const dial = byCuratedIntelligence(keys, providers, n)
+    const dial = byCuratedIntelligence(keys, providers, n, availableModels)
     return NextResponse.json(
       {
         ...dial,
@@ -135,7 +150,7 @@ async function answer(asked: Record<string, unknown>) {
       { status: 400 },
     )
   }
-  const dial = byIntelligence(models, providers, bench, n)
+  const dial = byIntelligence(models, providers, bench, n, availableModels)
   return NextResponse.json(
     {
       how: dial.how,

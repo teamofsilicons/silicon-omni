@@ -12,6 +12,7 @@ admin in `apps/web`. Query current recommendations without starting a daemon:
 omni categories
 omni models --provider codex-app-server
 omni best code --json
+omni best writing --json
 omni accounts --json
 omni login                     # browser device sign-in
 si auth setup omni             # authenticate a Silicon

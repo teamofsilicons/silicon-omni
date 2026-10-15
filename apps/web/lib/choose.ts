@@ -43,6 +43,8 @@ export interface Entry {
   status?: "current" | "legacy" | "restricted"
   effort?: string
   fast?: boolean
+  /** Recommend this configuration only when the caller reports the model as available. */
+  requires_availability?: boolean
   scores?: Record<string, number | null> | null
   price?: number | null
   secs?: number | null
@@ -52,6 +54,13 @@ export interface Entry {
 export interface Key {
   says: string
   picks: Entry[]
+}
+
+export type AvailableModels = Record<string, readonly string[]>
+
+function eligible(entry: Entry, availableModels: AvailableModels): boolean {
+  return !entry.requires_availability ||
+    (Object.hasOwn(availableModels, entry.provider) && availableModels[entry.provider].includes(entry.model))
 }
 
 export const LEVELS = 11
@@ -72,7 +81,7 @@ export function runnable(entry: Entry): Pick | null {
     model: entry.model,
     effort,
     // asking a CLI with no fast mode to run hot is ignored, not refused
-    fast: Boolean(entry.fast) && canRunFast(known.id),
+    fast: Boolean(entry.fast) && canRunFast(known.id, entry.model),
   }
 }
 
@@ -119,7 +128,7 @@ export interface KeyAnswer {
   /** the first pick whose provider is signed in */
   pick: Pick | null
   /** the whole shortlist, best first, with what was available marked */
-  shortlist: (Pick & { available: boolean })[]
+  shortlist: (Pick & { available: boolean; requires_availability?: boolean })[]
 }
 
 /**
@@ -129,14 +138,18 @@ export interface KeyAnswer {
  * provider is available wins. Losing a vendor moves you down the list rather
  * than into an argument about weights.
  */
-export function byKey(keys: Record<string, Key>, key: string, providers: string[]): KeyAnswer | null {
+export function byKey(keys: Record<string, Key>, key: string, providers: string[], availableModels: AvailableModels = {}): KeyAnswer | null {
   if (!Object.hasOwn(keys, key)) return null
   const found = keys[key]
   if (!found) return null
-  const shortlist = found.picks
-    .map((p) => runnable(p))
-    .filter((p): p is Pick => p !== null)
-    .map((p) => ({ ...p, available: providers.includes(p.provider) }))
+  const shortlist = found.picks.flatMap(entry => {
+    const pick = runnable(entry)
+    if (!pick) return []
+    const requires = entry.requires_availability === true
+    return [{ ...pick, ...(requires ? { requires_availability: true } : {}),
+      available: providers.includes(pick.provider) && eligible(entry, availableModels),
+    }]
+  })
   return {
     how: "key",
     key,
@@ -205,8 +218,9 @@ export function byIntelligence(
   providers: string[],
   bench: string,
   intelligence: number,
+  availableModels: AvailableModels = {},
 ): DialAnswer {
-  const current = entries.filter((entry) => entry.status !== "legacy" && entry.status !== "restricted")
+  const current = entries.filter((entry) => entry.status !== "legacy" && entry.status !== "restricted" && eligible(entry, availableModels))
   const models = plottable(current, bench).filter((m) => providers.includes(m.provider))
   const ladder = ladderOf(edge(models, bench))
   const level = Math.max(0, Math.min(10, Math.round(intelligence)))
@@ -216,10 +230,10 @@ export function byIntelligence(
 const CURATED_CATEGORIES = ["cost", "cost", "cost", "fast", "general", "general", "general", "code", "code", "research", "research"]
 
 /** The default dial follows current editorial choices, without inventing scores. */
-export function byCuratedIntelligence(keys: Record<string, Key>, providers: string[], intelligence: number) {
+export function byCuratedIntelligence(keys: Record<string, Key>, providers: string[], intelligence: number, availableModels: AvailableModels = {}) {
   const level = Math.max(0, Math.min(10, Math.round(intelligence)))
   const ladder: Record<string, Pick | null> = Object.fromEntries(
-    CURATED_CATEGORIES.map((key, index) => [String(index), byKey(keys, key, providers)?.pick ?? null]),
+    CURATED_CATEGORIES.map((key, index) => [String(index), byKey(keys, key, providers, availableModels)?.pick ?? null]),
   )
   return {
     how: "intelligence" as const,
@@ -261,9 +275,11 @@ export function byName(
       return { how: "model", pick: null, why: `${known.label} is not signed in` }
     if (!known.efforts.includes(effort))
       return { how: "model", pick: null, why: `${known.label} does not take the effort "${effort}"` }
+    if (asked.fast && known.id === "claude-code-cli" && !canRunFast(known.id, asked.model))
+      return { how: "model", pick: null, why: `Claude fast mode does not support ${asked.model}; use normal speed or a supported Opus model` }
     return {
       how: "model",
-      pick: { provider: known.id, model: asked.model, effort, fast: Boolean(asked.fast) && canRunFast(known.id) },
+      pick: { provider: known.id, model: asked.model, effort, fast: Boolean(asked.fast) && canRunFast(known.id, asked.model) },
     }
   }
   return { how: "model", pick: null, why: `no provider named "${asked.provider}"` }

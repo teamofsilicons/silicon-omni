@@ -7,7 +7,9 @@
 //! Quota comes from `agy -p "/usage"`, which the CLI answers itself: no model
 //! is called and no quota is spent.
 
-use std::time::Duration;
+use std::collections::BTreeSet;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -20,6 +22,45 @@ const USAGE: &[&str] = &["agy", "-p", "/usage", "--output-format", "stream-json"
 const WINDOWS: &[(&str, &str)] = &[("5h", "5h"), ("weekly", "7d")];
 
 pub struct Antigravity;
+
+static MODELS: Mutex<Option<(Instant, BTreeSet<String>)>> = Mutex::new(None);
+
+fn valid_model_id(id: &str) -> bool {
+    let mut bytes = id.bytes();
+    id.len() <= 120
+        && bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || b"._:/-".contains(&byte))
+}
+
+fn model_ids(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(id, _)| id.trim())
+        .filter(|id| valid_model_id(id))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A failed or unrecognized inventory grants access to no conditional models.
+/// A zero max age forces a fresh probe for a public catalog query.
+pub fn models(max_age: Duration) -> BTreeSet<String> {
+    let mut memo = MODELS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((_, ids)) = memo.as_ref().filter(|(at, _)| at.elapsed() < max_age) {
+        return ids.clone();
+    }
+    let ids = match output(&["agy", "models"], Duration::from_secs(15)) {
+        Some((0, text)) => model_ids(&text),
+        _ => BTreeSet::new(),
+    };
+    *memo = Some((Instant::now(), ids.clone()));
+    ids
+}
+
+pub fn forget_models() {
+    *MODELS.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
 
 fn buckets(lines: &str) -> Vec<Value> {
     for line in lines.lines() {
@@ -77,9 +118,16 @@ impl Account for Antigravity {
     }
 
     fn probe(&self) -> String {
+        let mut memo = MODELS.lock().unwrap_or_else(|p| p.into_inner());
         match output(&["agy", "models"], Duration::from_secs(60)) {
-            Some((0, _)) => AUTHENTICATED.into(),
-            _ => UNAUTHENTICATED.into(),
+            Some((0, text)) => {
+                *memo = Some((Instant::now(), model_ids(&text)));
+                AUTHENTICATED.into()
+            }
+            _ => {
+                *memo = None;
+                UNAUTHENTICATED.into()
+            }
         }
     }
 
@@ -108,6 +156,25 @@ impl Account for Antigravity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_reads_only_tab_separated_ids_and_deduplicates_them() {
+        let ids = model_ids(
+            "Fetching available models...\ngemini-4-argon-high\tGemini 4 Argon\ngemini-3.8-flash-high\tGemini 3.8 Flash\ngemini-4-argon-high\tDuplicate\nnot an id\tWarning\n\tBlank\n",
+        );
+        assert_eq!(
+            ids,
+            BTreeSet::from(["gemini-3.8-flash-high".into(), "gemini-4-argon-high".into(),])
+        );
+        assert!(model_ids("Please sign in").is_empty());
+        let invalid = format!(
+            "-header\tHeader\ngemini!bad\tInvalid\nmodèle\tInvalid\n{}\tToo long\n",
+            "a".repeat(121)
+        );
+        assert!(model_ids(&invalid).is_empty());
+        assert!(valid_model_id(&"a".repeat(120)));
+        assert!(valid_model_id("models/gemini_4:argon-high.v1"));
+    }
 
     fn usage(groups: Value) -> String {
         json!({"event": "command_result", "command": {"data": {"groups": groups}}}).to_string()

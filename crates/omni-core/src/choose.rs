@@ -20,9 +20,10 @@
 //! shipped in the binary as a fallback: a model list baked into a release is a
 //! model list that goes quietly stale, and a wrong recommendation is worse than
 //! an honest refusal. An answer fetched once is reused even after it expires,
-//! so a machine that has run before keeps working offline.
+//! so a machine that has run before keeps working offline. Conditional model
+//! access is remembered for at most 30 seconds and is part of the cache key.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
@@ -32,6 +33,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::providers::antigravity_cli;
 use crate::shared::{clock, paths};
 
 /// Where answers come from unless you say otherwise.
@@ -42,7 +44,7 @@ pub const CACHE_TTL: f64 = 60.0 * 60.0;
 /// After a failed fetch, sit still rather than retry every call.
 pub const QUIET_TTL: f64 = 5.0 * 60.0;
 /// Bump when an answer's shape changes; older caches are then ignored.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 /// The dial is 0-10 inclusive.
 pub const INTELLIGENCE_VALUES: i64 = 11;
 
@@ -73,7 +75,7 @@ impl Pick {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "how", rename_all = "lowercase")]
 pub enum Ask {
-    /// A shortlist somebody chose: `fast`, `code`, `design`, `research`, `cost`, `general`.
+    /// A shortlist somebody chose: `fast`, `code`, `design`, `research`, `writing`, `cost`, `general`.
     Key { key: String },
     /// The left edge of a board, nought to ten.
     Intelligence {
@@ -267,13 +269,39 @@ pub fn providers_key(providers: &[String]) -> String {
     sorted.join("+")
 }
 
-/// What this exact question is cached under: the providers, and the ask.
+pub type AvailableModels = BTreeMap<String, BTreeSet<String>>;
+
+/// Only conditional models need inventory; ordinary picks still use providers.
+pub fn available_models(providers: Option<&[String]>, max_age: Duration) -> AvailableModels {
+    let mut models = AvailableModels::new();
+    if providers.is_none_or(|names| names.iter().any(|name| name == antigravity_cli::NAME)) {
+        models.insert(
+            antigravity_cli::NAME.into(),
+            antigravity_cli::models(max_age),
+        );
+    }
+    models
+}
+
+/// Base cache identity: the providers and ask, before conditional model inventory.
 pub fn cache_name(ask: &Ask, providers: &[String]) -> String {
     let mut parts = vec![providers_key(providers)];
     for (name, value) in ask.query() {
         parts.push(format!("{name}={value}"));
     }
     parts.join("|")
+}
+
+fn cache_name_with_models(ask: &Ask, providers: &[String], models: &AvailableModels) -> String {
+    let name = cache_name(ask, providers);
+    if models.is_empty() {
+        name
+    } else {
+        format!(
+            "{name}|available_models={}",
+            serde_json::to_string(models).unwrap()
+        )
+    }
 }
 
 fn urlencode(text: &str) -> String {
@@ -299,11 +327,22 @@ fn unwrap(payload: &Value) -> Option<Pick> {
 
 /// Ask the registry this exact question.
 pub fn fetch(ask: &Ask, providers: &[String], timeout: Duration) -> Option<Pick> {
-    let mut query = vec![(
-        "providers".to_string(),
-        providers_key(providers),
-    )];
+    let models = available_models(Some(providers), Duration::from_secs(30));
+    fetch_with_models(ask, providers, &models, timeout)
+}
+
+fn fetch_with_models(
+    ask: &Ask,
+    providers: &[String],
+    models: &AvailableModels,
+    timeout: Duration,
+) -> Option<Pick> {
+    let mut query = vec![("providers".to_string(), providers_key(providers))];
     query.extend(ask.query());
+    query.push((
+        "available_models".into(),
+        serde_json::to_string(models).ok()?,
+    ));
     let tail: Vec<String> = query
         .iter()
         .map(|(name, value)| format!("{}={}", urlencode(name), urlencode(value)))
@@ -365,7 +404,8 @@ fn read_cache(name: &str, fresh_only: bool) -> Option<Pick> {
 /// real answer takes: pinning writes a normal cache entry, so nothing about
 /// resolution behaves differently under test than it does in the world.
 pub fn pin(ask: &Ask, providers: &[String], pick: &Pick, ttl: f64) {
-    write_cache(&cache_name(ask, providers), pick, ttl);
+    let models = available_models(Some(providers), Duration::from_secs(30));
+    write_cache(&cache_name_with_models(ask, providers, &models), pick, ttl);
 }
 
 pub fn write_cache(name: &str, pick: &Pick, ttl: f64) {
@@ -435,7 +475,8 @@ pub fn resolve(ask: &Ask, providers: &[String]) -> Result<Pick, NoAnswer> {
         });
     }
 
-    let name = cache_name(ask, providers);
+    let models = available_models(Some(providers), Duration::from_secs(30));
+    let name = cache_name_with_models(ask, providers, &models);
     let keep = |pick: Pick, ttl: f64| -> Result<Pick, NoAnswer> {
         if !allowed.contains(pick.provider.as_str()) {
             return Err(NoAnswer(format!(
@@ -452,7 +493,7 @@ pub fn resolve(ask: &Ask, providers: &[String]) -> Result<Pick, NoAnswer> {
             return Ok(fresh);
         }
     }
-    if let Some(found) = fetch(ask, providers, Duration::from_secs(5)) {
+    if let Some(found) = fetch_with_models(ask, providers, &models, Duration::from_secs(5)) {
         return keep(found, CACHE_TTL);
     }
     // Unreachable. An old answer beats no answer, but stop asking for a while

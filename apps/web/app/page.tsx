@@ -350,8 +350,8 @@ export default async function Landing() {
             <>
               <p>
                 One word for the kind of work, and the answer comes back — a
-                shortlist somebody chose, best first, and the first vendor on it you are
-                signed into wins.
+                shortlist in the configured priority order. The first eligible model on a
+                signed-in provider wins; Argon falls back to Flash when access is not confirmed.
               </p>
               <p>
                 If you would rather say a number, say a number. If you already know the model, name

@@ -69,6 +69,15 @@ stage it, optionally add it to a category shortlist, and publish. Legacy and res
 models stay available by explicit name but cannot enter recommendation shortlists.
 Concurrent edits produce HTTP 409 and require loading the latest catalog.
 
+Seven categories are required when publishing, including `writing`. Older saved
+catalogs and browser drafts are upgraded on read by deriving an initial writing
+shortlist from `general`; reading never overwrites the stored catalog.
+
+Argon recommendations require the exact model ID to appear in the caller's
+Antigravity inventory. Keep Flash high directly after Argon as its fallback.
+The CLI probes `agy models`; the daemon reuses that inventory for at most 30
+seconds and clears it when account state is forgotten. Unknown access skips Argon.
+
 Public service responses cache for up to one minute; existing local daemons cache
 selection results for one hour. No redeployment or Python release is needed to publish.
 `tools/refresh.py` only refreshes the development seed; it preserves manual metadata
@@ -80,6 +89,7 @@ and never writes production data.
 omni categories --json
 omni models --provider codex-app-server --json
 omni best code --json
+omni best writing --json
 omni login
 omni login status --json
 si auth setup omni
@@ -93,6 +103,12 @@ Public GET endpoints: `/categories`, `/models` (backend host), `/models.json`,
 an explicit measured ranking; missing current measurements return no pick.
 Admin GET/PUT `/api/admin/catalog` requires an authenticated, authorized session.
 PUT accepts `{catalog, revision}` and uses that revision as an S3 ETag condition.
+`/choose.json` accepts `available_models` as a JSON provider-to-model-ID map
+(URL-encoded for GET), for example
+`{"antigravity-cli":["gemini-4-argon-high"]}`. Both category and numeric
+queries apply this evidence to picks marked `requires_availability`. Without it,
+conditional picks are skipped. Explicit model requests remain explicit.
+`omni best` probes on each request; recommendation cache keys include the inventory.
 
 ## Silicon Apps release
 
@@ -118,8 +134,8 @@ package ID and development release ID in the following commands:
 
 ```sh
 silicon-apps upload omni target/omni-linux-x86_64.tar.gz --target linux-x86_64 --json
-silicon-apps release omni --version 0.10.0 --package PACKAGE_ID --json
-silicon-apps promote omni DEVELOPMENT_RELEASE_ID --version 0.10.0 --json
+silicon-apps release omni --version 0.10.1 --package PACKAGE_ID --json
+silicon-apps promote omni DEVELOPMENT_RELEASE_ID --version 0.10.1 --json
 silicon-apps publish omni
 ```
 
