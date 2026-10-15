@@ -320,3 +320,30 @@ omni/
 Run `cargo test --workspace` for the core and daemon, then `pytest` for the public
 Python API through a real private-home daemon. `pytest -m live` is intentionally
 separate: it drives installed vendor CLIs, spends quota, and uses the real `~/.omni`.
+
+
+## Hosted catalog and admin
+
+`apps/web` is the monorepo's Next.js app. One deployment serves the public website,
+`backend.omni.teamofsilicons.com` for registry queries, and
+`admin.omni.teamofsilicons.com` for the authenticated editor. Host routing only
+selects views; authorization is enforced in every admin API handler.
+
+Public queries require no identity or running daemon. The local Rust CLI makes
+`categories`, `models`, and `best` requests directly. The existing daemon/session
+protocol remains unchanged.
+
+Production data is one versioned, encrypted, private S3 object. Reads are consistent;
+publishing supplies the current ETag with `If-Match`, so concurrent saves cannot
+silently overwrite each other. Each successful write records the immutable Accounts
+UUID and timestamp. Vercel production assumes an AWS role using OIDC restricted to
+this project; no AWS access keys are stored in Vercel. The role may only get and put
+this one object. Storage outages fail visibly instead of reverting to stale seed data.
+
+Silicon Accounts issues access tokens for app `omni`. Browser sign-in uses state and
+PKCE; the server stores an encrypted session in a Secure, HttpOnly, SameSite cookie.
+The CLI exchanges a short-lived Silicon token or uses device authorization. Every
+protected request introspects the Accounts token and checks an explicit UUID
+allowlist. A successful login alone does not grant admin access. Mutations reject
+cross-origin cookie requests. Sessions last at most 30 minutes and require sign-in
+again; refresh credentials are not retained.

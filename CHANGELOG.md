@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+- Consolidate the registry website and selection service into `apps/web`.
+- Add a versioned AWS catalog, Silicon Accounts admin editor, and public backend.
+- Add `omni categories`, `models`, `best`, `accounts`, `login`, `logout`, and `admin`.
+- Recommend GPT-6.1 Sol, GPT-6 Luna, GPT-6 Astra, and Claude 5.5 models; retain legacy options.
+- Default the numeric dial to curated categories and keep explicit benchmark rankings separate.
+
+
 ## 0.9.2
 
 **Failed messages are retried after automatic failover.** When a provider loses

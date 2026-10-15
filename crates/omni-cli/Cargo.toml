@@ -23,4 +23,8 @@ path = "src/bin/omni.rs"
 
 [dependencies]
 silicon-omni.workspace = true
+omni-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+libc.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"] }

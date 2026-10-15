@@ -1,0 +1,9 @@
+{
+  "name": "silicon-omni-monorepo", "private": true,
+  "scripts": {
+    "dev": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/web run build",
+    "test:web": "npm --prefix apps/web test",
+    "check": "npm --prefix apps/web run check"
+  }
+}

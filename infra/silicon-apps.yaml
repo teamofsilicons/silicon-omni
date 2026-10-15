@@ -1,0 +1,7 @@
+schema_version: 1
+app_id: omni
+version: 0.10.0
+command: omni
+targets:
+  linux-x86_64:
+    binary: bin/omni
