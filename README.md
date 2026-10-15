@@ -5,6 +5,24 @@ the subscriptions you already pay for, not API keys. A small Rust daemon keeps t
 providers and conversations warm; Python, Rust, and the bundled terminal client all
 speak to it.
 
+This monorepo also contains the website, public model registry, and Silicon Accounts
+admin in `apps/web`. Query current recommendations without starting a daemon:
+
+```bash
+omni categories
+omni models --provider codex-app-server
+omni best code --json
+omni accounts --json
+omni login                     # browser device sign-in
+si auth setup omni             # authenticate a Silicon
+omni admin                     # print the editor URL
+```
+
+Public API: [backend.omni.teamofsilicons.com](https://backend.omni.teamofsilicons.com).
+Admin: [admin.omni.teamofsilicons.com](https://admin.omni.teamofsilicons.com).
+See [deployment and access](docs/DEPLOYMENT.md) and
+[current model recommendations](docs/MODEL_RECOMMENDATIONS.md).
+
 ```python
 from omni import Inference, Event
 
@@ -173,13 +191,12 @@ producing answers that were defensible and wrong — three models within one
 percent of each other and a hundred Elo apart, and a winner that moved when a
 constant did. Ranking is not judgement.
 
-**A number** is the dial, 0 to 10. Every model the three CLIs can run is plotted
-by its score on a benchmark against the dollars it measurably cost to earn that
-score, and only the **left edge** becomes a dial: a model earns a rung when
-nothing else is both better *and* cheaper. `bench` picks the board —
-`gdpval-aa`, `terminal-bench`, `agents-last-exam`, `design-arena-full-stack`, or
-`artificial-analysis-intelligence-index`. Names carry no version, so
-Terminal-Bench 2.1 becoming 3 changes nothing here.
+**A number** is the dial, 0 to 10. Without `bench`, it uses the current curated
+categories: cost (0–2), fast (3), general (4–6), code (7–8), research (9–10).
+The response says `basis: "curated"`. An explicit `bench` instead uses measured
+cost/quality frontiers and says `basis: "measured"`; legacy and restricted models
+remain selectable by name but are excluded from automatic recommendations.
+Missing measurements produce no measured answer, never an invented score.
 
 **A model** is you already knowing. The name goes to the CLI verbatim, so a
 model released this morning works without omni knowing about it — and it is
@@ -195,13 +212,13 @@ answered on the machine, with no network at all.
 | Claude Code | a fast mode on its largest models, opted into per session |
 | Antigravity | no such thing. Asking is **ignored rather than refused** |
 
-**omni does none of this choosing, and knows the name of no model.** It asks
-`omni.teamofsilicons.com/choose.json` with what it was told and which CLIs are
-signed in, and keeps the answer in `~/.omni/cache` for an hour. `model` and
-`effort` go to the CLI verbatim, so a model released tomorrow needs no release
-of this package — only a commit to
-[`models.json`](https://github.com/teamofsilicons/omnipotent) in the registry
-repo. Point somewhere else with `OMNI_REGISTRY`.
+**The local daemon does none of this choosing.** It asks
+`backend.omni.teamofsilicons.com/choose.json` with the requested work and available
+providers, then caches the answer for an hour. Model and effort names still pass to
+the CLI verbatim. Administrators use Silicon Accounts to update the versioned AWS
+catalog through the web editor; no library release or redeployment is needed.
+`OMNI_BACKEND` changes the service origin, and `OMNI_REGISTRY` overrides the exact
+selection endpoint.
 
 Nothing ships in the wheel as a fallback. A model list baked into a release is a
 model list that goes quietly stale, and a wrong recommendation is worse than an
@@ -674,12 +691,15 @@ crates/
   omni-core/       conductor, sessions, translation, and provider adapters
   omni-daemon/     session registry and NDJSON-over-Unix-socket server
   omni-client/     multiplexed synchronous Rust daemon client
-  omni-cli/        terminal client and streaming chat UI
+  omni-cli/        terminal client, catalog queries, and Silicon Accounts login
+apps/web/          Next.js website, backend API, and admin editor
+infra/registry.yml versioned S3 catalog and Vercel workload identity
 ```
 
-The dial, the landing page and the reference live in
-[teamofsilicons/omnipotent](https://github.com/teamofsilicons/omnipotent). Which models
-exist is that repo's problem; running them is this one's.
+The website and selection service were imported from `teamofsilicons/omnipotent`
+at commit `089af1b`. They now live in `apps/web` in this repository. The checked-in
+`models.json` is a development/bootstrap seed; the production catalog is managed
+through the admin editor.
 
 Adding a provider means an `Account` and a `Runner` — see
 [`crates/omni-core/src/providers/base.rs`](crates/omni-core/src/providers/base.rs) and

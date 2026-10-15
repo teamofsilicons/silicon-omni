@@ -1,0 +1,1457 @@
+{
+  "note": "Curated models and recommendation shortlists for Omni. `keys` are editorial choices, ordered best first; the first signed-in provider wins. They are not benchmark rankings. `models` contains one row per provider, model, and effort. Explicit model IDs still pass through even when absent here. Missing measurements stay null. Legacy options remain selectable by name; current recommendations do not use them.",
+  "fields": {
+    "provider": "which inference adapter runs it: claude-code-cli, codex-app-server, antigravity-cli",
+    "model": "passed to the CLI verbatim. it does not have to exist in any catalogue",
+    "effort": "passed to the CLI verbatim. \"\" means the flag is not passed at all",
+    "price": "USD per Artificial Analysis Intelligence Index v4.3 task; null means unmeasured.",
+    "secs": "Seconds per Artificial Analysis Intelligence Index v4.3 task; null means unmeasured.",
+    "scores": "Benchmark ID to measured score; missing measurements are not ranked.",
+    "status": "current: recommended generation; legacy: retained for explicit selection; restricted: requires additional access. Status does not prove account access.",
+    "sources": "Official documentation URLs supporting model identity, effort, lifecycle, or price; these do not replace the historical benchmark source.",
+    "notes": "Model or provider access details and recommendation context.",
+    "api_pricing": "First-party standard API USD per 1M tokens, as of the catalog date. Separate from measured per-task price and CLI subscription usage."
+  },
+  "source": {
+    "benchmark": "Artificial Analysis Intelligence Index v4.3, GDPval-AA v2, Terminal-Bench 4.0",
+    "url": "https://artificialanalysis.ai/models/gpt-6-astra",
+    "score": "Elo from blind pairwise judging of complete work deliverables over 220 GDPval tasks in an agentic harness, anchored so a human expert scores 1000. 95% CIs run about +/-15 to +/-27, so gaps under ~35 Elo are not separable.",
+    "price": "USD per Artificial Analysis Intelligence Index v4.3 task; null means unmeasured.",
+    "captured": "2026-09-09",
+    "secs": "Seconds per Artificial Analysis Intelligence Index v4.3 task; null means unmeasured.",
+    "provider": "Artificial Analysis",
+    "design": "Design Arena, Full Stack leaderboard, per-criteria average. Captured 2026-08-25 from https://www.designarena.ai/leaderboard/fullstack",
+    "research": "Agents' Last Exam, Score (average partial credit) for the best effort each harness publishes. Captured 2026-08-25 from https://agents-last-exam.org/leaderboard"
+  },
+  "caveats": [
+    "Keyword shortlists are curated recommendations, not cross-provider benchmark winners. No Omni head-to-head evaluation has established a universal best model.",
+    "Existing benchmark, per-task price, and timing measurements are preserved from the September 2026 import. They were not rerun during the October catalog update.",
+    "New model rows have null scores, price, and secs until comparable measurements are captured. Vendor launch benchmarks are not mixed with the older benchmark versions or harnesses.",
+    "API token prices are separate from per-task benchmark costs and subscription limits. Long-context, caching, speed tiers, and regional processing can change API pricing.",
+    "A signed-in provider does not guarantee access to every model. The installed Codex model cache and Antigravity model list were checked on 2026-10-15; Claude Code account access was not probed with inference.",
+    "GPT-5.6 options remain available for explicit selection. GPT-5.5 is retired for ChatGPT-authenticated Codex; API-key sessions are unaffected.",
+    "Astra ultra is supported by the local app server but has no separately measured row here; its score is not inferred from max.",
+    "Gemini 4 Argon is available on eligible Antigravity plans but absent from the checked account model list, so it is not a default or fallback here."
+  ],
+  "models": [
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Current balanced workhorse for coding and professional work. Local Codex default is low; curated picks set effort explicitly.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Current balanced workhorse for coding and professional work. Local Codex default is low; curated picks set effort explicitly.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Current balanced workhorse for coding and professional work. Local Codex default is low; curated picks set effort explicitly.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Current balanced workhorse for coding and professional work. Local Codex default is low; curated picks set effort explicitly.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6.1-sol",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Current balanced workhorse for coding and professional work. Local Codex default is low; curated picks set effort explicitly.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Efficient model for focused tasks. Local Codex supports low through max; API-only none is not used in CLI recommendations.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-luna",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Efficient model for focused tasks. Local Codex supports low through max; API-only none is not used in CLI recommendations.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Efficient model for focused tasks. Local Codex supports low through max; API-only none is not used in CLI recommendations.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-luna",
+      "effort": "xhigh",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Efficient model for focused tasks. Local Codex supports low through max; API-only none is not used in CLI recommendations.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-luna",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Efficient model for focused tasks. Local Codex supports low through max; API-only none is not used in CLI recommendations.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "notes": "Previous generation workhorse retained for explicit selection; GPT-6.1 Sol is preferred.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "notes": "Previous generation retained for explicit selection and available during the GPT-6 rollout.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.4,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "notes": "Previous generation retained for explicit selection and available during the GPT-6 rollout.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+        "https://learn.chatgpt.com/docs/models",
+        "https://developers.openai.com/api/docs/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.2,
+        "output": 1.2,
+        "cached_input": 0.02,
+        "as_of": "2026-10-15",
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "notes": "Standard rates for at most 272K input tokens. Above that, input and cache rates double and output rates multiply by 1.5. Other tiers and regional premiums differ."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5-5",
+      "effort": "low",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For complex, open-ended coding and knowledge work. Claude Code defaults to medium; raise effort when verification or sustained judgment matters.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For complex, open-ended coding and knowledge work. Claude Code defaults to medium; raise effort when verification or sustained judgment matters.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For complex, open-ended coding and knowledge work. Claude Code defaults to medium; raise effort when verification or sustained judgment matters.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For complex, open-ended coding and knowledge work. Claude Code defaults to medium; raise effort when verification or sustained judgment matters.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For complex, open-ended coding and knowledge work. Claude Code defaults to medium; raise effort when verification or sustained judgment matters.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 4,
+        "output": 20,
+        "cached_input": 0.2,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For scoped everyday work, design iteration, and polished documents. Claude Code default is medium; API default is high.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For scoped everyday work, design iteration, and polished documents. Claude Code default is medium; API default is high.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For scoped everyday work, design iteration, and polished documents. Claude Code default is medium; API default is high.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5-5",
+      "effort": "xhigh",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For scoped everyday work, design iteration, and polished documents. Claude Code default is medium; API default is high.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5-5",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For scoped everyday work, design iteration, and polished documents. Claude Code default is medium; API default is high.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 2,
+        "output": 10,
+        "cached_input": 0.1,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "First-party standard API token rates. Cache writes, fast mode, regional processing, and subscription usage are separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-5-5",
+      "effort": "low",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For high-volume, latency-sensitive work. Claude Code defaults to medium; low is used for the fast and cost fallbacks.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "Rates for prompts up to 100,000 tokens. Above that: input $0.50, output $2.50, cache reads $0.05 per 1M tokens. Subscription usage is separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-5-5",
+      "effort": "medium",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For high-volume, latency-sensitive work. Claude Code defaults to medium; low is used for the fast and cost fallbacks.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "Rates for prompts up to 100,000 tokens. Above that: input $0.50, output $2.50, cache reads $0.05 per 1M tokens. Subscription usage is separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-5-5",
+      "effort": "high",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For high-volume, latency-sensitive work. Claude Code defaults to medium; low is used for the fast and cost fallbacks.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "Rates for prompts up to 100,000 tokens. Above that: input $0.50, output $2.50, cache reads $0.05 per 1M tokens. Subscription usage is separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-5-5",
+      "effort": "xhigh",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For high-volume, latency-sensitive work. Claude Code defaults to medium; low is used for the fast and cost fallbacks.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "Rates for prompts up to 100,000 tokens. Above that: input $0.50, output $2.50, cache reads $0.05 per 1M tokens. Subscription usage is separate."
+      }
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-5-5",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "For high-volume, latency-sensitive work. Claude Code defaults to medium; low is used for the fast and cost fallbacks.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config",
+        "https://platform.claude.com/docs/en/about-claude/pricing"
+      ],
+      "api_pricing": {
+        "currency": "USD",
+        "unit": "1M tokens",
+        "input": 0.1,
+        "output": 0.5,
+        "cached_input": 0.01,
+        "as_of": "2026-10-15",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "notes": "Rates for prompts up to 100,000 tokens. Above that: input $0.50, output $2.50, cache reads $0.05 per 1M tokens. Subscription usage is separate."
+      }
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "scores": {
+        "artificial-analysis-intelligence-index": 52.8141,
+        "gdpval-aa": 1580.2,
+        "terminal-bench": 0.5909
+      },
+      "price": 3.2575,
+      "secs": 492.3,
+      "status": "current",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ]
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-astra",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 52.5059,
+        "gdpval-aa": 1555.23,
+        "terminal-bench": 0.596
+      },
+      "price": 2.3088,
+      "secs": 338.4,
+      "status": "current",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ]
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "scores": {
+        "artificial-analysis-intelligence-index": 51.0481,
+        "gdpval-aa": 1529.7,
+        "terminal-bench": 0.5404
+      },
+      "price": 1.7214,
+      "secs": 244.9,
+      "status": "current",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ]
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5",
+      "effort": "max",
+      "scores": {
+        "artificial-analysis-intelligence-index": 50.7002,
+        "gdpval-aa": 1735.09,
+        "terminal-bench": 0.4899,
+        "agents-last-exam": 49.0,
+        "design-arena-full-stack": 6.2
+      },
+      "price": 5.8584,
+      "secs": 851.7,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "scores": {
+        "artificial-analysis-intelligence-index": 49.6685,
+        "gdpval-aa": 1500.67,
+        "terminal-bench": 0.4949
+      },
+      "price": 1.5406,
+      "secs": 221.1,
+      "status": "current",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ]
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 49.6515,
+        "gdpval-aa": 1708.14,
+        "terminal-bench": 0.4646,
+        "design-arena-full-stack": 6.8
+      },
+      "price": 4.8778,
+      "secs": 741.9,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5",
+      "effort": "high",
+      "scores": {
+        "artificial-analysis-intelligence-index": 48.2372,
+        "gdpval-aa": 1628.94,
+        "terminal-bench": 0.4596,
+        "design-arena-full-stack": 6.2
+      },
+      "price": 3.6133,
+      "secs": 558.6,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "scores": {
+        "artificial-analysis-intelligence-index": 45.9945,
+        "gdpval-aa": 1419.29,
+        "terminal-bench": 0.4192
+      },
+      "price": 0.8175,
+      "secs": 96.4,
+      "status": "current",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ]
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5",
+      "effort": "medium",
+      "scores": {
+        "artificial-analysis-intelligence-index": 45.0576,
+        "gdpval-aa": 1524.87,
+        "terminal-bench": 0.3434,
+        "design-arena-full-stack": 6.2
+      },
+      "price": 2.1895,
+      "secs": 350.8,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-terra",
+      "effort": "max",
+      "scores": {
+        "artificial-analysis-intelligence-index": 42.2515,
+        "gdpval-aa": 1476.96,
+        "terminal-bench": 0.3535,
+        "agents-last-exam": 50.7,
+        "design-arena-full-stack": 6.7
+      },
+      "price": 1.3987,
+      "secs": 378.5,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Previous generation retained for explicit selection; available during the GPT-6 rollout and excluded from curated category picks."
+    },
+    {
+      "provider": "antigravity-cli",
+      "model": "gemini-3.8-flash-high",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 41.1864,
+        "gdpval-aa": 1463.81,
+        "terminal-bench": 0.197
+      },
+      "price": 1.2428,
+      "secs": 241.2,
+      "status": "current",
+      "sources": [
+        "https://www.antigravity.google/docs/models/",
+        "https://antigravity.google/docs/cli/headless/"
+      ],
+      "notes": "Exact CLI slug verified by agy models on 2026-10-15. Effort is encoded in the model ID, so the separate effort is empty."
+    },
+    {
+      "provider": "antigravity-cli",
+      "model": "gemini-3.8-flash-medium",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 39.9993,
+        "gdpval-aa": 1455.38,
+        "terminal-bench": 0.197
+      },
+      "price": 0.931,
+      "secs": null,
+      "status": "current",
+      "sources": [
+        "https://www.antigravity.google/docs/models/",
+        "https://antigravity.google/docs/cli/headless/"
+      ],
+      "notes": "Exact CLI slug verified by agy models on 2026-10-15. Effort is encoded in the model ID, so the separate effort is empty."
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-opus-5",
+      "effort": "low",
+      "scores": {
+        "artificial-analysis-intelligence-index": 39.7883,
+        "gdpval-aa": 1371.52,
+        "terminal-bench": 0.2626,
+        "design-arena-full-stack": 6.2
+      },
+      "price": 1.0983,
+      "secs": 173.6,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.4",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 38.9756,
+        "gdpval-aa": 1306.71,
+        "design-arena-full-stack": 3.0
+      },
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Older model retained for explicit selection. Availability depends on account and authentication."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.5",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 38.6292,
+        "gdpval-aa": 1395.85,
+        "terminal-bench": 0.1465,
+        "agents-last-exam": 47.9,
+        "design-arena-full-stack": 7.0
+      },
+      "price": 2.634,
+      "secs": 267.8,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Retired from ChatGPT-authenticated Codex on 2026-10-14 at 19:00 UTC. OpenAI API and API-key-authenticated Codex sessions are unaffected; explicit use requires compatible authentication."
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-sonnet-5",
+      "effort": "max",
+      "scores": {
+        "artificial-analysis-intelligence-index": 38.3577,
+        "gdpval-aa": 1500.86,
+        "terminal-bench": 0.1414,
+        "design-arena-full-stack": 5.6
+      },
+      "price": 5.0912,
+      "secs": 938.9,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-terra",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 38.1856,
+        "gdpval-aa": 1478.6,
+        "terminal-bench": 0.101,
+        "design-arena-full-stack": 6.7
+      },
+      "price": 0.6318,
+      "secs": 216.8,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Previous generation retained for explicit selection; available during the GPT-6 rollout and excluded from curated category picks."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.5",
+      "effort": "high",
+      "scores": {
+        "artificial-analysis-intelligence-index": 37.285,
+        "gdpval-aa": 1371.51,
+        "terminal-bench": 0.0909,
+        "design-arena-full-stack": 7.0
+      },
+      "price": 1.5413,
+      "secs": 196.8,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Retired from ChatGPT-authenticated Codex on 2026-10-14 at 19:00 UTC. OpenAI API and API-key-authenticated Codex sessions are unaffected; explicit use requires compatible authentication."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "scores": {
+        "artificial-analysis-intelligence-index": 34.491,
+        "gdpval-aa": 1415.36,
+        "terminal-bench": 0.0152,
+        "design-arena-full-stack": 6.7
+      },
+      "price": 0.3379,
+      "secs": 129.3,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Previous generation retained for explicit selection; available during the GPT-6 rollout and excluded from curated category picks."
+    },
+    {
+      "provider": "antigravity-cli",
+      "model": "gemini-3.6-flash-high",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 34.3396,
+        "gdpval-aa": 1331.37,
+        "terminal-bench": 0.0707,
+        "design-arena-full-stack": 6.7
+      },
+      "price": 0.9288,
+      "secs": 215.4,
+      "status": "restricted",
+      "sources": [
+        "https://www.antigravity.google/docs/models/",
+        "https://antigravity.google/docs/cli/headless/"
+      ],
+      "notes": "Retained historical option. Current Antigravity docs list Gemini 3.6 Flash for Enterprise only; absent from the checked account model list."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "scores": {
+        "artificial-analysis-intelligence-index": 34.1542,
+        "gdpval-aa": 1288.18,
+        "terminal-bench": 0.0505,
+        "design-arena-full-stack": 7.0
+      },
+      "price": 0.9017,
+      "secs": 101.8,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Retired from ChatGPT-authenticated Codex on 2026-10-14 at 19:00 UTC. OpenAI API and API-key-authenticated Codex sessions are unaffected; explicit use requires compatible authentication."
+    },
+    {
+      "provider": "antigravity-cli",
+      "model": "gemini-3.8-flash-low",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 33.7857,
+        "gdpval-aa": 1358.55,
+        "terminal-bench": 0.101
+      },
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "sources": [
+        "https://www.antigravity.google/docs/models/",
+        "https://antigravity.google/docs/cli/headless/"
+      ],
+      "notes": "Exact CLI slug verified by agy models on 2026-10-15. Effort is encoded in the model ID, so the separate effort is empty."
+    },
+    {
+      "provider": "antigravity-cli",
+      "model": "gemini-3.5-flash-high",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 32.9816,
+        "gdpval-aa": 1259.06,
+        "terminal-bench": 0.0657,
+        "design-arena-full-stack": 6.0
+      },
+      "price": 1.5625,
+      "secs": 246.0,
+      "status": "legacy",
+      "sources": [
+        "https://www.antigravity.google/docs/models/",
+        "https://antigravity.google/docs/cli/headless/"
+      ],
+      "notes": "Retained historical CLI ID; absent from the checked account model list. Gemini 3.8 Flash is preferred."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "scores": {
+        "artificial-analysis-intelligence-index": 32.7588,
+        "gdpval-aa": 1319.37,
+        "terminal-bench": 0.0101,
+        "design-arena-full-stack": 6.7
+      },
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Previous generation retained for explicit selection; available during the GPT-6 rollout and excluded from curated category picks."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.5",
+      "effort": "low",
+      "scores": {
+        "artificial-analysis-intelligence-index": 30.7095,
+        "gdpval-aa": 1112.71,
+        "design-arena-full-stack": 7.0
+      },
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Retired from ChatGPT-authenticated Codex on 2026-10-14 at 19:00 UTC. OpenAI API and API-key-authenticated Codex sessions are unaffected; explicit use requires compatible authentication."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.6-terra",
+      "effort": "low",
+      "scores": {
+        "artificial-analysis-intelligence-index": 27.8765,
+        "gdpval-aa": 1179.22,
+        "terminal-bench": 0.0152,
+        "design-arena-full-stack": 6.7
+      },
+      "price": null,
+      "secs": null,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Previous generation retained for explicit selection; available during the GPT-6 rollout and excluded from curated category picks."
+    },
+    {
+      "provider": "codex-app-server",
+      "model": "gpt-5.4-mini",
+      "effort": "xhigh",
+      "scores": {
+        "artificial-analysis-intelligence-index": 24.5789,
+        "gdpval-aa": 1094.54,
+        "terminal-bench": 0.0202
+      },
+      "price": 0.4097,
+      "secs": 283.7,
+      "status": "legacy",
+      "sources": [
+        "https://learn.chatgpt.com/docs/models"
+      ],
+      "notes": "Older model retained for explicit selection. Availability depends on account and authentication."
+    },
+    {
+      "provider": "claude-code-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "effort": "",
+      "scores": {
+        "artificial-analysis-intelligence-index": 17.5869,
+        "gdpval-aa": 854.45,
+        "terminal-bench": 0
+      },
+      "price": 0.2077,
+      "secs": 167.5,
+      "status": "legacy",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview",
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "notes": "Previous generation retained for explicit selection; Claude 5.5 is preferred in category recommendations."
+    }
+  ],
+  "benches": {
+    "artificial-analysis-intelligence-index": {
+      "label": "Artificial Analysis Intelligence Index v4.3",
+      "short": "intelligence",
+      "url": "https://artificialanalysis.ai/methodology/intelligence-benchmarking",
+      "field": "intelligenceIndex"
+    },
+    "gdpval-aa": {
+      "label": "GDPval-AA v2",
+      "short": "gdpval",
+      "url": "https://artificialanalysis.ai/evaluations/gdpval-aa",
+      "field": "gdpval"
+    },
+    "terminal-bench": {
+      "label": "Terminal-Bench 4.0",
+      "short": "terminal",
+      "url": "https://artificialanalysis.ai/evaluations/terminal-bench",
+      "field": "terminalbenchV40"
+    },
+    "agents-last-exam": {
+      "label": "Agents' Last Exam",
+      "short": "last exam",
+      "url": "https://agents-last-exam.org/leaderboard",
+      "field": "score"
+    },
+    "design-arena-full-stack": {
+      "label": "Design Arena \u2014 Full Stack",
+      "short": "design",
+      "url": "https://www.designarena.ai/leaderboard/fullstack",
+      "field": "criteria average"
+    }
+  },
+  "anchors": {
+    "price mean": 1.961,
+    "secs mean": 338.8
+  },
+  "keys": {
+    "fast": {
+      "says": "Respond quickly to focused tasks; prefer low effort.",
+      "picks": [
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "fast": true
+        },
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-low",
+          "effort": ""
+        }
+      ]
+    },
+    "code": {
+      "says": "Write and change code with a balance of capability and cost.",
+      "picks": [
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-opus-5-5",
+          "effort": "high"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-high",
+          "effort": ""
+        }
+      ]
+    },
+    "design": {
+      "says": "Create and iterate on polished interfaces and documents.",
+      "picks": [
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "effort": "high"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-high",
+          "effort": ""
+        }
+      ]
+    },
+    "research": {
+      "says": "Investigate complex questions and check the evidence.",
+      "picks": [
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6-astra",
+          "effort": "high"
+        },
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-opus-5-5",
+          "effort": "high"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-high",
+          "effort": ""
+        }
+      ]
+    },
+    "cost": {
+      "says": "Keep cost low for focused, well-scoped tasks.",
+      "picks": [
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6-luna",
+          "effort": "low"
+        },
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-low",
+          "effort": ""
+        }
+      ]
+    },
+    "general": {
+      "says": "A balanced default for everyday coding and professional work.",
+      "picks": [
+        {
+          "provider": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "provider": "claude-code-cli",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
+        },
+        {
+          "provider": "antigravity-cli",
+          "model": "gemini-3.8-flash-medium",
+          "effort": ""
+        }
+      ]
+    }
+  },
+  "as_of": "2026-10-15",
+  "references": [
+    {
+      "title": "Codex model availability and GPT-5.5 retirement",
+      "url": "https://learn.chatgpt.com/docs/models",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "OpenAI API model catalog",
+      "url": "https://developers.openai.com/api/docs/models",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "OpenAI API pricing",
+      "url": "https://developers.openai.com/api/docs/pricing",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Claude model IDs and capabilities",
+      "url": "https://platform.claude.com/docs/en/models/overview",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Claude Code model and effort configuration",
+      "url": "https://code.claude.com/docs/en/model-config",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Claude API pricing",
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Claude Opus 5.5 capabilities",
+      "url": "https://www.anthropic.com/claude-opus-5-5",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Claude Sonnet 5.5 capabilities",
+      "url": "https://www.anthropic.com/claude-sonnet-5-5",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Antigravity model availability",
+      "url": "https://www.antigravity.google/docs/models/",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Antigravity CLI model IDs",
+      "url": "https://antigravity.google/docs/cli/headless/",
+      "checked": "2026-10-15"
+    },
+    {
+      "title": "Gemini 3.8 Flash capabilities and pricing",
+      "url": "https://ai.google.dev/gemini-api/docs/generate-content/whats-new-gemini-3.8",
+      "checked": "2026-10-15"
+    }
+  ]
+}

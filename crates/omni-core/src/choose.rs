@@ -35,7 +35,8 @@ use serde_json::{Map, Value, json};
 use crate::shared::{clock, paths};
 
 /// Where answers come from unless you say otherwise.
-pub const REGISTRY: &str = "https://omni.teamofsilicons.com/choose.json";
+pub const BACKEND: &str = "https://backend.omni.teamofsilicons.com";
+pub const REGISTRY: &str = "https://backend.omni.teamofsilicons.com/choose.json";
 /// Burst the cache after an hour.
 pub const CACHE_TTL: f64 = 60.0 * 60.0;
 /// After a failed fetch, sit still rather than retry every call.
@@ -240,12 +241,22 @@ impl std::fmt::Display for NoAnswer {
 }
 impl std::error::Error for NoAnswer {}
 
-/// The registry to ask. Read per call, so `OMNI_REGISTRY` can be set late.
+/// The public catalog service. Read per call for local development overrides.
+pub fn backend() -> String {
+    std::env::var("OMNI_BACKEND")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| BACKEND.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// An explicit registry URL takes precedence over the backend base URL.
 pub fn remote() -> String {
     std::env::var("OMNI_REGISTRY")
         .ok()
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| REGISTRY.to_string())
+        .unwrap_or_else(|| format!("{}/choose.json", backend()))
 }
 
 /// One answer per set of providers, named the same way on both sides.

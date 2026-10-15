@@ -11,3 +11,8 @@ node_modules/
 .vercel
 target/
 .keys
+
+.env*
+!.env.example
+*.tsbuildinfo
+.omni-local/

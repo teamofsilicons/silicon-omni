@@ -1,5 +1,8 @@
 //! `silicon-omni` / `so` — thin terminal clients for `omnid`.
 
+mod catalog;
+mod identity;
+
 use std::fmt;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
@@ -20,19 +23,31 @@ Usage:
   silicon-omni set SESSION SETTING VALUE              queue a setting change
   silicon-omni providers [PROVIDER...]                list available providers
   silicon-omni dial [PROVIDER...]                     show the 0–10 dial
+  silicon-omni categories [--json]                    list curated work categories
+  silicon-omni models [--provider P] [--json]          list catalog models and efforts
+  silicon-omni best CATEGORY [--providers A,B] [--json] query the best model shortlist
+  silicon-omni accounts [--json]                      show Silicon Accounts integration
+  silicon-omni login [--slt TOKEN | --slt-stdin] [--json] sign in with Silicon Accounts
+  silicon-omni login status [--json]                  show your Silicon account
+  silicon-omni logout                                revoke your Silicon login
+  silicon-omni admin                                 print the catalog admin URL
   silicon-omni account PROVIDER ACTION [CODE]         inspect or authenticate an account
   silicon-omni daemon start|status|stop               manage the persistent daemon
   silicon-omni ping                                   show daemon information
   silicon-omni request OP [JSON]                      make a low-level protocol call
 
 Every command is also available through the short `so` and `omni` executables.
+Catalog commands (categories, models, best) query the hosted backend directly.
+They need no daemon or login; best considers all providers unless you limit them.
+`login` without an SLT starts a browser device flow. `si auth setup omni` can
+sign in using the same Silicon Accounts integration. Credentials stay private.
 
 What should answer (say exactly one):
   --key WORD          a shortlist somebody chose: fast, code, design,
                       research, cost, general
   --intelligence 0..10 [--bench BOARD]
-                      the dial — the left edge of a board, where a model earns
-                      a rung when nothing else is both better and cheaper
+                      curated cost, fast, general, code, and research tiers;
+                      --bench selects by measured quality and cost instead
   --model NAME [--effort LEVEL] [--provider P] [--fast]
                       you already know. NAME goes to the CLI verbatim
 
@@ -51,7 +66,8 @@ Account actions:
 Environment:
   OMNI_HOME           state directory (default: ~/.omni)
   OMNI_DAEMON         exact omnid binary to start
-  OMNI_REGISTRY       registry endpoint that answers what to run
+  OMNI_BACKEND        catalog base URL (default: https://backend.omni.teamofsilicons.com)
+  OMNI_REGISTRY       override the complete model-selection endpoint URL
 "#;
 
 #[derive(Debug)]
@@ -114,6 +130,13 @@ fn run(mut args: Vec<String>) -> Result<()> {
         "daemon" => daemon(args)?,
         "providers" => providers(args)?,
         "dial" => dial(args)?,
+        "categories" => catalog::categories(args)?,
+        "models" => catalog::models(args)?,
+        "best" => catalog::best(args)?,
+        "accounts" => identity::accounts(args)?,
+        "login" => identity::login(args)?,
+        "logout" => identity::logout(args)?,
+        "admin" => identity::admin(args)?,
         "sessions" => sessions(no_args(command, args)?)?,
         "status" => status(one_arg(command, args)?)?,
         "history" => history(args)?,

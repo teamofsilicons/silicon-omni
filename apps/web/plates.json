@@ -1,0 +1,352 @@
+{
+  "note": "Every image on this site: where it came from, what it is licensed as, and why it is here. tools/plates.py prints them to one bit through the same Bayer matrix the page's dither uses. This file is also the licence audit — nothing goes on the site that cannot be traced from this line.",
+  "rule": "Public domain, PD-US, CC0 or no-known-restrictions only. Several visually better candidates were rejected for being CC BY-SA, which is why there is no photograph of Chand Baori and no starling murmuration here.",
+  "plates": {
+    "break-of-gauge": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/c/c0/Break_of_gauge_GWR_Gloucester.jpg",
+      "title": "The Break of Gauge at Gloucester",
+      "date": "wood engraving, Illustrated London News, 6 June 1846",
+      "holder": "Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Break_of_gauge_GWR_Gloucester.jpg",
+      "aspect": 1.62,
+      "gravity": 0.1,
+      "cutoff": 0.6,
+      "contrast": 1.02,
+      "gamma": 1.12,
+      "spread": 1.3,
+      "size": [
+        720,
+        444
+      ]
+    },
+    "sea-floor": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/8/80/T4-_d673_-_Fig._428_%E2%80%94_Constructions_sous-marines.png",
+      "title": "Fig. 428 — Constructions sous-marines",
+      "date": "Louis Figuier, Les Merveilles de la Science, 1870",
+      "holder": "Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:T4-_d673_-_Fig._428_%E2%80%94_Constructions_sous-marines.png",
+      "aspect": 1.15,
+      "cutoff": 0.2,
+      "contrast": 0.95,
+      "gamma": 1.8,
+      "spread": 1.0,
+      "crop": [
+        0.02,
+        0.14,
+        0.99,
+        1.0
+      ],
+      "size": [
+        720,
+        626
+      ]
+    },
+    "movable-type": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/3/3c/Tipo.jpg",
+      "title": "The parts of one piece of type",
+      "date": "Francisco Bauer, Conocimientos fundamentales para el aprendiz cajista, Barcelona, 1921",
+      "holder": "Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Tipo.jpg",
+      "aspect": 0.95,
+      "gravity": 0.06,
+      "cutoff": 0.4,
+      "contrast": 1.0,
+      "gamma": 1.0,
+      "spread": 1.1,
+      "size": [
+        720,
+        757
+      ]
+    },
+    "ships-log": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/HMS_AMPHITRITE_%E2%80%93_August_1914_to_April_1915%2C_UK%2C_Mediterranean%2C_Atlantic_%28Old_Weather%29.djvu/page20-1280px-HMS_AMPHITRITE_%E2%80%93_August_1914_to_April_1915%2C_UK%2C_Mediterranean%2C_Atlantic_%28Old_Weather%29.djvu.jpg",
+      "title": "Log of HMS Amphitrite, Thursday 13 August 1914",
+      "date": "1914",
+      "holder": "Royal Navy, digitised by the Old Weather project",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:HMS_AMPHITRITE_%E2%80%93_August_1914_to_April_1915,_UK,_Mediterranean,_Atlantic_(Old_Weather).djvu",
+      "crop": [
+        0.06,
+        0.06,
+        0.97,
+        0.72
+      ],
+      "aspect": 1.18,
+      "cutoff": 2.6,
+      "contrast": 1.45,
+      "gamma": 1.0,
+      "spread": 1.3,
+      "size": [
+        720,
+        610
+      ]
+    },
+    "punched-tape": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/ea/Hollerith_Punched_Card.jpg",
+      "title": "Hollerith punched card",
+      "date": "1895",
+      "holder": "Library of Congress, via Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Hollerith_Punched_Card.jpg",
+      "aspect": 2.23,
+      "cutoff": 1.0,
+      "contrast": 1.14,
+      "gamma": 1.2,
+      "spread": 1.5,
+      "size": [
+        720,
+        323
+      ]
+    },
+    "switchboard": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Photograph_of_Women_Working_at_a_Bell_System_Telephone_Switchboard_%283660047829%29.jpg/1920px-Photograph_of_Women_Working_at_a_Bell_System_Telephone_Switchboard_%283660047829%29.jpg",
+      "title": "Women working at a Bell System international switchboard",
+      "date": "c. 1935–45",
+      "holder": "U.S. National Archives, via Wikimedia Commons",
+      "licence": "No known copyright restrictions",
+      "source": "https://commons.wikimedia.org/wiki/File:Photograph_of_Women_Working_at_a_Bell_System_Telephone_Switchboard_(3660047829).jpg",
+      "aspect": 2.25,
+      "gravity": 0.12,
+      "cutoff": 1.4,
+      "contrast": 1.06,
+      "gamma": 1.3,
+      "spread": 2.0,
+      "size": [
+        720,
+        320
+      ]
+    },
+    "wax-seal": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Parchment_Document_and_Seal_of_Philip_of_Alsace%2C_Count_of_Flanders_%281168%E2%80%9391%29_and_of_Vermondois_%281155%E2%80%9391%29_MET_54698.jpg/1920px-Parchment_Document_and_Seal_of_Philip_of_Alsace%2C_Count_of_Flanders_%281168%E2%80%9391%29_and_of_Vermondois_%281155%E2%80%9391%29_MET_54698.jpg",
+      "title": "Charter of Philip of Alsace, Count of Flanders, with his pendant seal",
+      "date": "1176",
+      "holder": "The Metropolitan Museum of Art",
+      "licence": "CC0",
+      "source": "https://commons.wikimedia.org/wiki/File:Parchment_Document_and_Seal_of_Philip_of_Alsace,_Count_of_Flanders_(1168%E2%80%9391)_and_of_Vermondois_(1155%E2%80%9391)_MET_54698.jpg",
+      "aspect": 0.62,
+      "gravity": 0.0,
+      "cutoff": 1.2,
+      "contrast": 1.1,
+      "gamma": 1.22,
+      "spread": 1.8,
+      "crop": [
+        0.08,
+        0.02,
+        0.92,
+        0.99
+      ],
+      "size": [
+        720,
+        1161
+      ]
+    },
+    "coastline-survey": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/1857_U.S._Coast_Survey_Map_or_Chart_of_the_Entrance_to_the_York_River%2C_Virginia_-_Geographicus_-_YorkRiver-uscs-1857.jpg/1920px-1857_U.S._Coast_Survey_Map_or_Chart_of_the_Entrance_to_the_York_River%2C_Virginia_-_Geographicus_-_YorkRiver-uscs-1857.jpg",
+      "title": "Preliminary Chart of York River, Virginia, with soundings",
+      "date": "United States Coast Survey, 1857",
+      "holder": "Geographicus, via Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:1857_U.S._Coast_Survey_Map_or_Chart_of_the_Entrance_to_the_York_River,_Virginia_-_Geographicus_-_YorkRiver-uscs-1857.jpg",
+      "crop": [
+        0.2,
+        0.27,
+        0.78,
+        0.72
+      ],
+      "aspect": 2.15,
+      "cutoff": 0.5,
+      "contrast": 1.5,
+      "gamma": 1.22,
+      "spread": 1.3,
+      "size": [
+        720,
+        334
+      ]
+    },
+    "stepwell": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Wav_or_well_at_Adalaj%2C_Ahmedabad.jpg/1920px-Wav_or_well_at_Adalaj%2C_Ahmedabad.jpg",
+      "title": "III. Wav or Well at Adalaj, Ahmedabad",
+      "date": "albumen print, Bourne & Shepherd, 1874",
+      "holder": "Institut National d'Histoire de l'Art",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Wav_or_well_at_Adalaj,_Ahmedabad.jpg",
+      "crop": [
+        0.04,
+        0.02,
+        0.96,
+        0.9
+      ],
+      "aspect": 1.0,
+      "gravity": 0.15,
+      "cutoff": 1.6,
+      "contrast": 1.08,
+      "gamma": 1.34,
+      "spread": 2.0,
+      "size": [
+        720,
+        720
+      ]
+    },
+    "sextant": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Lecky_1901_Sextant_double_reflection_wrinklesinpracti00leck_1_0109.jpg/1920px-Lecky_1901_Sextant_double_reflection_wrinklesinpracti00leck_1_0109.jpg",
+      "title": "The principle of double reflection",
+      "date": "S. T. S. Lecky, Wrinkles in Practical Navigation, 1901",
+      "holder": "Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Lecky_1901_Sextant_double_reflection_wrinklesinpracti00leck_1_0109.jpg",
+      "aspect": 1.66,
+      "cutoff": 0.4,
+      "contrast": 1.0,
+      "gamma": 1.0,
+      "spread": 1.1,
+      "size": [
+        720,
+        434
+      ]
+    },
+    "lock-gate": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/The_guard_gate%2C_Gatun_Lock_-_DPLA_-_ce8874a830255b669ff2b2e19f5044e8.jpg/1920px-The_guard_gate%2C_Gatun_Lock_-_DPLA_-_ce8874a830255b669ff2b2e19f5044e8.jpg",
+      "title": "The Guard Gate, Gatun",
+      "date": "crayon lithograph, Joseph Pennell, 1912",
+      "holder": "Boston Public Library, via Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:The_guard_gate,_Gatun_Lock_-_DPLA_-_ce8874a830255b669ff2b2e19f5044e8.jpg",
+      "crop": [
+        0.1,
+        0.22,
+        0.9,
+        0.84
+      ],
+      "aspect": 1.05,
+      "gravity": 0.2,
+      "cutoff": 1.0,
+      "contrast": 1.0,
+      "gamma": 1.44,
+      "spread": 1.9,
+      "size": [
+        720,
+        685
+      ]
+    },
+    "no-admittance": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Quarantine_notice_and_city_ordinance_restricting_landings_of_steamboats_or_other_water_craft_at_or_near_Cape_Girardeau%2C_October_8%2C_1878.jpg/1920px-Quarantine_notice_and_city_ordinance_restricting_landings_of_steamboats_or_other_water_craft_at_or_near_Cape_Girardeau%2C_October_8%2C_1878.jpg",
+      "title": "Quarantine notice, Cape Girardeau",
+      "date": "8 October 1878",
+      "holder": "Missouri History Museum",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Quarantine_notice_and_city_ordinance_restricting_landings_of_steamboats_or_other_water_craft_at_or_near_Cape_Girardeau,_October_8,_1878.jpg",
+      "crop": [
+        0.015,
+        0.02,
+        0.985,
+        0.5
+      ],
+      "aspect": 2.55,
+      "cutoff": 1.2,
+      "contrast": 1.3,
+      "gamma": 1.18,
+      "spread": 1.4,
+      "size": [
+        720,
+        282
+      ]
+    },
+    "stale-catalogue": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Price_Act_or%2C_The_List_of_Prices_in_force_in_the_Town_of_Ipswich_for_the_Prevention_of_Monopoly_and_Oppression%2C_February_10%2C_1777%2C_photograph_by_Frank_Cousins%2C_c._1865-1914%2C_from_the_Digital_Commonwealth_-_commonwealth_2b88sk52x.jpg/1920px-thumbnail.jpg",
+      "title": "The Price Act, or, The List of the Prices now in Force in the Town of Ipswich",
+      "date": "printed 10 February 1777",
+      "holder": "Digital Commonwealth / Phillips Library",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Price_Act_or,_The_List_of_Prices_in_force_in_the_Town_of_Ipswich_for_the_Prevention_of_Monopoly_and_Oppression,_February_10,_1777,_photograph_by_Frank_Cousins,_c._1865-1914,_from_the_Digital_Commonwealth_-_commonwealth_2b88sk52x.jpg",
+      "crop": [
+        0.05,
+        0.03,
+        0.95,
+        0.64
+      ],
+      "aspect": 1.24,
+      "cutoff": 1.0,
+      "contrast": 1.2,
+      "gamma": 1.3,
+      "spread": 1.5,
+      "size": [
+        720,
+        580
+      ]
+    },
+    "murmuration": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/74/Red-winged_Blackbirds_on_the_horizon_%2822145152325%29.jpg/1920px-Red-winged_Blackbirds_on_the_horizon_%2822145152325%29.jpg",
+      "title": "Red-winged blackbirds on the horizon",
+      "date": "8 October 2015",
+      "holder": "U.S. Fish and Wildlife Service, Midwest Region",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Red-winged_Blackbirds_on_the_horizon_(22145152325).jpg",
+      "aspect": 3.0,
+      "gravity": 0.3,
+      "cutoff": 0.5,
+      "contrast": 1.5,
+      "gamma": 1.1,
+      "spread": 1.7,
+      "crop": [
+        0.0,
+        0.46,
+        1.0,
+        0.8
+      ],
+      "size": [
+        720,
+        240
+      ]
+    },
+    "diatoms": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Radiolaria_%28Challenger%29_Plate_041.jpg/1920px-Radiolaria_%28Challenger%29_Plate_041.jpg",
+      "title": "Radiolaria, plate 41 of the Challenger report",
+      "date": "Ernst Haeckel, engraved by Adolf Giltsch, 1887",
+      "holder": "Wikimedia Commons",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Radiolaria_(Challenger)_Plate_041.jpg",
+      "crop": [
+        0.03,
+        0.04,
+        0.97,
+        0.66
+      ],
+      "aspect": 1.62,
+      "cutoff": 0.5,
+      "contrast": 1.02,
+      "gamma": 1.06,
+      "spread": 1.2,
+      "size": [
+        720,
+        444
+      ]
+    },
+    "pigeon-post": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Attaching_a_message_to_a_Signal_Corps_carrier_pigeon%2C_circa_1917-18.%2C_1917_-_ca._1920_-_NARA_-_512434.tif/lossy-page1-1280px-Attaching_a_message_to_a_Signal_Corps_carrier_pigeon%2C_circa_1917-18.%2C_1917_-_ca._1920_-_NARA_-_512434.tif.jpg",
+      "title": "Attaching a message capsule to a Signal Corps carrier pigeon",
+      "date": "c. 1917–18",
+      "holder": "U.S. National Archives (512434)",
+      "licence": "Public domain",
+      "source": "https://commons.wikimedia.org/wiki/File:Attaching_a_message_to_a_Signal_Corps_carrier_pigeon,_circa_1917-18.,_1917_-_ca._1920_-_NARA_-_512434.tif",
+      "aspect": 1.05,
+      "gravity": 0.18,
+      "cutoff": 1.4,
+      "contrast": 1.1,
+      "gamma": 1.3,
+      "spread": 2.0,
+      "crop": [
+        0.12,
+        0.08,
+        0.96,
+        0.92
+      ],
+      "size": [
+        720,
+        685
+      ]
+    }
+  }
+}
