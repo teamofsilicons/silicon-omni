@@ -96,6 +96,49 @@ test("an unknown key is refused rather than guessed at", () => {
   }
 })
 
+test("Argon requires a positive exact model match and keeps the Flash fallback in provider order", () => {
+  const providers = ["antigravity-cli", "codex-app-server"]
+  const available = { "antigravity-cli": ["gemini-4-argon-high"] }
+  assert.equal(byKey(DOC.keys, "design", providers).pick.model, "gemini-3.8-flash-high")
+  assert.equal(byKey(DOC.keys, "design", providers, available).pick.model, "gemini-4-argon-high")
+  assert.equal(byKey(DOC.keys, "design", ["codex-app-server"], available).pick.model, "gpt-6-astra")
+  for (const models of [{}, { "antigravity-cli": [] }, { "antigravity-cli": ["gemini-4-argon-medium"] }, { "codex-app-server": ["gemini-4-argon-high"] }]) {
+    const answer = byKey(DOC.keys, "design", providers, models)
+    assert.equal(answer.pick.model, "gemini-3.8-flash-high")
+    assert.equal(answer.shortlist.find(p => p.model === "gemini-4-argon-high").available, false)
+  }
+  assert.equal(byKey(DOC.keys, "design", ALL, available).pick.model, "claude-opus-5-5")
+})
+
+test("all seven configured category defaults match the requested efforts and priorities", () => {
+  const expected = {
+    fast: ["gpt-6.1-sol", "high", true], cost: ["gpt-6.1-sol", "low", false],
+    code: ["claude-opus-5-5", "max", false], general: ["claude-sonnet-5-5", "max", false],
+    design: ["claude-opus-5-5", "max", false], research: ["gpt-6-astra", "max", false],
+    writing: ["claude-sonnet-5-5", "max", false],
+  }
+  assert.deepEqual(Object.keys(DOC.keys).sort(), Object.keys(expected).sort())
+  for (const [key, pick] of Object.entries(expected)) {
+    const actual = byKey(DOC.keys, key, ALL).pick
+    assert.deepEqual([actual.model, actual.effort, actual.fast], pick, key)
+    const gemini = byKey(DOC.keys, key, ["antigravity-cli"]).pick
+    assert.equal(gemini.model, "gemini-3.8-flash-high", key)
+  }
+})
+
+test("the route validates and applies availability to keys and the curated dial", async () => {
+  for (const field of ["key=writing", "intelligence=7"]) {
+    const query = `${field}&providers=antigravity-cli`
+    assert.equal((await (await askRoute(query)).json()).pick.model, "gemini-3.8-flash-high")
+    const evidence = encodeURIComponent(JSON.stringify({ "antigravity-cli": ["gemini-4-argon-high"] }))
+    const result = await (await askRoute(`${query}&available_models=${evidence}`)).json()
+    assert.equal(result.pick.model, "gemini-4-argon-high")
+  }
+  for (const bad of ["invalid-json", "null", "[]", '{"antigravity-cli":"gemini-4-argon-high"}', '{"unknown":[]}', '{"antigravity-cli":[null]}']) {
+    assert.equal((await askRoute(`key=code&available_models=${encodeURIComponent(bad)}`)).status, 400)
+  }
+})
+
 /* ------------------------------------------------------------------- fast */
 
 test("fast survives on a CLI that has one, and is dropped on one that does not", () => {
@@ -122,8 +165,17 @@ test("fast changes the command, and only where it means something", () => {
   )
 })
 
+test("Sonnet never advertises Claude fast mode or silently changes to Opus", () => {
+  assert.equal(canRunFast("claude-code-cli", "claude-sonnet-5-5"), false)
+  assert.equal(canRunFast("claude-code-cli", "claude-opus-5-5"), true)
+  assert.doesNotMatch(invocation({ provider: "claude-code-cli", model: "claude-sonnet-5-5", effort: "medium", fast: true }), /\/fast/)
+  const answer = byName(ALL, { provider: "claude-code-cli", model: "claude-sonnet-5-5", effort: "medium", fast: true })
+  assert.equal(answer.pick, null)
+  assert.match(answer.why, /does not support/)
+})
+
 test("only two of the three can run hot", () => {
-  assert.deepEqual(ALL.map(canRunFast), [true, true, false])
+  assert.deepEqual(ALL.map(id => canRunFast(id)), [true, true, false])
 })
 
 /* --------------------------------------------------------------- by number */
@@ -212,6 +264,13 @@ test("an unavailable curated category keeps its rung null instead of inventing a
   assert.equal(answer.pick, null)
   assert.equal(Object.keys(answer.ladder).length, 11)
   assert.ok(Object.values(answer.ladder).every((pick) => pick === null))
+})
+
+test("adding measurements cannot bypass a model availability requirement", () => {
+  const gated = { ...BOARD[0], requires_availability: true }
+  assert.equal(byIntelligence([gated], ALL, "b", 10).pick, null)
+  const models = { [gated.provider]: [gated.model] }
+  assert.equal(byIntelligence([gated], ALL, "b", 10, models).pick.model, gated.model)
 })
 
 test("the public route defaults to curated picks and keeps benchmark queries measured", async () => {

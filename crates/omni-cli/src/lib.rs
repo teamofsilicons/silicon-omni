@@ -39,12 +39,14 @@ Usage:
 Every command is also available through the short `so` and `omni` executables.
 Catalog commands (categories, models, best) query the hosted backend directly.
 They need no daemon or login; best considers all providers unless you limit them.
+Best checks local Agy model access when Antigravity is included; unknown access
+uses the category's ordinary fallback.
 `login` without an SLT starts a browser device flow. `si auth setup omni` can
 sign in using the same Silicon Accounts integration. Credentials stay private.
 
 What should answer (say exactly one):
   --key WORD          a shortlist somebody chose: fast, code, design,
-                      research, cost, general
+                      research, writing, cost, general
   --intelligence 0..10 [--bench BOARD]
                       curated cost, fast, general, code, and research tiers;
                       --bench selects by measured quality and cost instead

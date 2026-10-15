@@ -90,12 +90,14 @@ pub fn best(mut args: Vec<String>) -> Result<()> {
         ));
     }
     let mut query = vec![("key", args[0].trim().to_lowercase())];
-    if let Some(providers) = providers {
+    if let Some(providers) = &providers {
         if providers.is_empty() {
             return Err(CliError("--providers needs at least one provider".into()));
         }
         query.push(("providers", providers.join("+")));
     }
+    let models = choose::available_models(providers.as_deref(), Duration::ZERO);
+    query.push(("available_models", serde_json::to_string(&models)?));
     let value = request(&choose::remote(), &query)?;
     let response: Best = decode(&value)?;
     if format == Output::Json {

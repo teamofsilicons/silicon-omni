@@ -1,6 +1,6 @@
 schema_version: 1
 app_id: omni
-version: 0.10.0
+version: 0.10.1
 command: omni
 targets:
   linux-x86_64:

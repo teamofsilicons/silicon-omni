@@ -61,12 +61,12 @@ export default async function Models() {
         n={1}
         of={OF}
         name="the shortlists"
-        title="Six words, and who answers them."
+        title={`${Object.keys(keys).length} words, and who answers them.`}
         argue={
           <p className="set">
-            Chosen by hand, best first. The first vendor on a list you are signed into answers, so
-            losing one walks you a place down it. We tried working this out arithmetically and it
-            produced answers that were defensible and wrong.
+            Configured in priority order for each kind of work. The first eligible model on a
+            signed-in provider answers. Argon requires confirmed account access; Flash high is
+            its next fallback. These are routing choices, not benchmark rankings.
           </p>
         }
       >
@@ -95,6 +95,7 @@ export default async function Models() {
                       {m.model}
                       {m.effort ? <span className="quiet"> {m.effort}</span> : null}
                       {m.fast ? <span className="quiet"> fast</span> : null}
+                      {m.requires_availability ? <span className="quiet"> (if available)</span> : null}
                     </span>
                   ))}
                 </td>

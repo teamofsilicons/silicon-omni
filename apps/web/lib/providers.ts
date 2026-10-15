@@ -35,7 +35,7 @@ export interface Provider {
    * Claude Code has fast mode — the binary carries `fastMode`,
    * `fastModePerSessionOptIn` and `AnthropicBetaFastMode` — but exposes no
    * `--fast` flag. It is a per-session opt-in, toggled with `/fast`, and only
-   * on Opus 5 and 4.8. So the registry says fast and the library arranges it;
+   * on Opus 5.5, 5 and 4.8. Sonnet and Haiku cannot use this tier;
    * what is printed here is the session setting, not a flag to paste.
    *
    * Antigravity has no such thing, and `fast` on a Google pick is ignored
@@ -101,7 +101,7 @@ export function invocation(rung: {
   if (!known) return ""
   const effort = rung.effort ? known.effortArg.replace("<effort>", rung.effort) : ""
   // asked for fast on a CLI that has no such thing: ignored, not refused
-  const fast = rung.fast && known.fastArg ? known.fastArg : ""
+  const fast = rung.fast && canRunFast(rung.provider, rung.model) ? known.fastArg ?? "" : ""
   return known.run
     .replace("<model>", rung.model)
     .replace("<effort>", effort)
@@ -111,7 +111,9 @@ export function invocation(rung: {
 }
 
 /** Whether asking this provider to run hot means anything at all. */
-export function canRunFast(id: string): boolean {
+export function canRunFast(id: string, model?: string): boolean {
+  if (id === "claude-code-cli" && model !== undefined)
+    return ["opus", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"].includes(model.replace(/-\d{8}$/, ""))
   return Boolean(provider(id)?.fastArg)
 }
 

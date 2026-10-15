@@ -538,7 +538,7 @@ chat.send("hello")        # -> TEXT  'echo: hello'`,
     icon: "Database",
     title: "The registry",
     blurb:
-      "omni contains the name of no model and does none of this choosing. It sends a key, a number, or a model it was given, plus which CLIs are signed in, and hands the strings that come back to a CLI without reading anything else out of them.",
+      "omni contains the name of no model and does none of this choosing. It sends a key, a number, or a model it was given, plus signed-in CLIs and discovered model availability. The registry follows the configured priority and skips access-gated models unless their exact IDs are confirmed available.",
     code: `GET https://backend.omni.teamofsilicons.com/choose.json?key=code&providers=claude-code-cli+antigravity-cli`,
     lang: "http",
     entries: [

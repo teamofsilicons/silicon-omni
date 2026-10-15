@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+- Refresh category priorities and add a writing category.
+- Select Gemini 4 Argon only when Agy reports access; otherwise use Gemini 3.8 Flash.
+- Include available model IDs in registry queries and recommendation cache keys.
+
 ## 0.10.0
 
 - Consolidate the registry website and selection service into `apps/web`.
