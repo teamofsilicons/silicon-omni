@@ -360,7 +360,8 @@ fn api_error_message(data: &Value, message: &Value) -> bool {
     })
 }
 
-/// Tool output arrives as a string or a list of blocks; omni wants text.
+/// Content arrives as a string or a list of blocks; replay acknowledgements
+/// need its whitespace preserved for exact matching.
 pub fn flatten_content(content: Option<&Value>) -> String {
     match content {
         None | Some(Value::Null) => String::new(),
@@ -370,9 +371,7 @@ pub fn flatten_content(content: Option<&Value>) -> String {
             .map(flatten_block)
             .filter(|block| !block.is_empty())
             .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string(),
+            .join("\n"),
         Some(other) => flatten_block(other),
     }
 }
@@ -563,6 +562,57 @@ mod tests {
             }),
         );
         assert_eq!(next[0].extra[base::CONFIRMED_AS], event_type::START);
+    }
+
+    #[test]
+    fn replay_echoes_preserve_whitespace_when_matching_and_confirming() {
+        for text in [
+            "type: dm.sync.changed\n",
+            "\t  indented\r\ntext \t\n",
+            "\n \t",
+        ] {
+            let mut stream = Stream::default();
+            for (content, opening) in [
+                (json!([{"type": "text", "text": text}]), event_type::START),
+                (json!(text), event_type::INJECTED),
+            ] {
+                stream.expect_user(text);
+                let events = feed(
+                    &mut stream,
+                    json!({"type": "user", "isReplay": true, "message": {"content": content}}),
+                );
+                assert_eq!(events.len(), 1, "echo of {text:?}");
+                assert!(events[0].is(base::CONFIRMED));
+                assert_eq!(events[0].extra[base::CONFIRMED_AS], opening);
+                assert_eq!(events[0].text, text);
+            }
+        }
+    }
+
+    #[test]
+    fn a_whitespace_mismatch_cannot_confirm_the_expected_user() {
+        let mut stream = Stream::default();
+        stream.expect_user("hello");
+        for text in ["hello\n", " hello", "hello "] {
+            assert!(
+                feed(
+                    &mut stream,
+                    json!({
+                        "type": "user", "isReplay": true,
+                        "message": {"content": [{"type": "text", "text": text}]}
+                    })
+                )
+                .is_empty(),
+                "{text:?} is not the expected message"
+            );
+        }
+        let events = feed(
+            &mut stream,
+            json!({"type": "user", "isReplay": true, "message": {"content": "hello"}}),
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].extra[base::CONFIRMED_AS], event_type::START);
+        assert_eq!(events[0].text, "hello");
     }
 
     #[test]

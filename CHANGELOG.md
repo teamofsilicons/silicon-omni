@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+- Preserve whitespace in Claude replay acknowledgements, including the final newline in YAML messages, so accepted messages receive START or INJECTED and queued deliveries can advance.
+- Keep acknowledgement matching exact so echoes that differ only in whitespace cannot confirm another message.
+
 ## 0.10.1
 
 - Refresh category priorities and add a writing category.
