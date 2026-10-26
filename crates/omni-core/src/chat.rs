@@ -2575,6 +2575,58 @@ mod tests {
     }
 
     #[test]
+    fn coalesced_claude_receipts_clear_each_durable_message_and_allow_the_next_turn() {
+        let _home = crate::testing::scratch_home("coalesced-claude-receipts");
+        let (mut chat, handle, _, _) = delivery_chat("s", Delivery::Echoed);
+        chat.current = None;
+        let provider = crate::providers::codex_app_server::NAME;
+        let mut stream = crate::providers::claude_code_cli::Stream::new("model");
+        let messages = ["type: dm.sync.changed\n", "Good time to start a new session?"];
+        for message in messages {
+            stream.expect_user(message);
+            chat.dispatch(message.into());
+        }
+        let accepted = chat.meta.pending();
+        let replay = json!({
+            "type": "user", "isReplay": true,
+            "message": {"content": messages.map(|text| json!({"type": "text", "text": text}))}
+        });
+        for event in stream.feed(&replay.to_string()) {
+            chat.absorb(event.from(provider));
+        }
+        let durable = chat.store.events(0);
+        assert_eq!(durable.len(), 2);
+        for (index, event) in durable.iter().enumerate() {
+            assert_eq!(event.text, messages[index]);
+            assert_eq!(event.extra[MESSAGE_ID], accepted[index].id);
+            assert_eq!(event.turn, 0);
+        }
+        assert!(durable[0].is(event_type::START));
+        assert!(durable[1].is(event_type::INJECTED));
+        assert!(Meta::open("s").pending().is_empty());
+        assert_eq!(handle.snapshot().queued, 0);
+
+        for event in stream.feed(r#"{"type":"result","subtype":"success"}"#) {
+            chat.absorb(event.from(provider));
+        }
+        assert_eq!(handle.snapshot().status, WAITING);
+        stream.expect_user("next");
+        chat.dispatch("next".into());
+        for event in stream.feed(
+            r#"{"type":"user","isReplay":true,"message":{"content":[{"type":"text","text":"next"}]}}"#,
+        ) {
+            chat.absorb(event.from(provider));
+        }
+        assert!(Meta::open("s").pending().is_empty());
+        assert_eq!(handle.snapshot().queued, 0);
+        let durable = chat.store.events(0);
+        let next = durable.last().unwrap();
+        assert!(next.is(event_type::START));
+        assert_eq!(next.text, "next");
+        assert_eq!(next.turn, 1);
+    }
+
+    #[test]
     fn an_echo_waiting_after_end_keeps_the_chat_busy_until_its_native_turn() {
         let _home = crate::testing::scratch_home("echo-after-end");
         let (mut chat, handle, _, _) = delivery_chat("s", Delivery::Echoed);

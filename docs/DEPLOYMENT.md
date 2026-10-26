@@ -134,8 +134,8 @@ package ID and development release ID in the following commands:
 
 ```sh
 silicon-apps upload omni target/omni-linux-x86_64.tar.gz --target linux-x86_64 --json
-silicon-apps release omni --version 0.10.2 --package PACKAGE_ID --json
-silicon-apps promote omni DEVELOPMENT_RELEASE_ID --version 0.10.2 --json
+silicon-apps release omni --version 0.10.3 --package PACKAGE_ID --json
+silicon-apps promote omni DEVELOPMENT_RELEASE_ID --version 0.10.3 --json
 silicon-apps publish omni
 ```
 

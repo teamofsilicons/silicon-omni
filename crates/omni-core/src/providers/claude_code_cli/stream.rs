@@ -211,31 +211,59 @@ impl Stream {
     /// echo matching the FIFO of lines omni actually wrote can advance native
     /// turn state; control-channel chatter also arrives as replayed user text.
     fn replayed(&mut self, data: &Value) -> Vec<Event> {
-        let text = flatten_content(data["message"].get("content"));
-        if self.expected.front().map(String::as_str) != Some(text.as_str()) {
+        // Claude can combine queued inputs into one replay with one text block per input.
+        let texts = match &data["message"]["content"] {
+            Value::String(text) => vec![text.as_str()],
+            Value::Array(blocks) => {
+                let Some(texts) = blocks
+                    .iter()
+                    .map(|block| {
+                        block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .filter(|_| block["type"] == "text")
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return Vec::new();
+                };
+                texts
+            }
+            _ => return Vec::new(),
+        };
+        if texts.is_empty()
+            || !texts
+                .iter()
+                .copied()
+                .eq(self.expected.iter().take(texts.len()).map(String::as_str))
+        {
             return Vec::new();
         }
-        self.expected.pop_front();
-        let opening = if self.turn_open {
-            event_type::INJECTED
-        } else {
-            event_type::START
-        };
-        self.turn_open = true;
-        let mut event = base::confirmed(&text, opening)
-            .from(super::NAME)
-            .about(&self.model);
-        for key in ["session_id", "uuid", "timestamp"] {
-            if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
-                event.native.insert(key.into(), value.clone());
+        let mut events = Vec::with_capacity(texts.len());
+        for text in texts {
+            self.expected.pop_front();
+            let opening = if self.turn_open {
+                event_type::INJECTED
+            } else {
+                event_type::START
+            };
+            self.turn_open = true;
+            let mut event = base::confirmed(text, opening)
+                .from(super::NAME)
+                .about(&self.model);
+            for key in ["session_id", "uuid", "timestamp"] {
+                if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
+                    event.native.insert(key.into(), value.clone());
+                }
             }
+            if !self.session_id.is_empty() && !event.native.contains_key("session_id") {
+                event
+                    .native
+                    .insert("session_id".into(), json!(self.session_id));
+            }
+            events.push(event);
         }
-        if !self.session_id.is_empty() && !event.native.contains_key("session_id") {
-            event
-                .native
-                .insert("session_id".into(), json!(self.session_id));
-        }
-        vec![event]
+        events
     }
 
     /// A `user` line from Claude is a tool result coming back.
@@ -586,6 +614,87 @@ mod tests {
                 assert_eq!(events[0].extra[base::CONFIRMED_AS], opening);
                 assert_eq!(events[0].text, text);
             }
+        }
+    }
+
+    #[test]
+    fn coalesced_replay_confirms_each_submitted_message() {
+        let mut stream = Stream::new("model");
+        stream.session_id = "session".into();
+        let messages = ["type: dm.sync.changed\n", "Start a new session?", "later"];
+        for message in messages {
+            stream.expect_user(message);
+        }
+        let events = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true, "uuid": "combined",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {"content": [
+                    {"type": "text", "text": messages[0]},
+                    {"type": "text", "text": messages[1]}
+                ]}
+            }),
+        );
+        assert_eq!(events.len(), 2);
+        for (index, opening) in [event_type::START, event_type::INJECTED].iter().enumerate() {
+            assert!(events[index].is(base::CONFIRMED));
+            assert_eq!(events[index].text, messages[index]);
+            assert_eq!(events[index].extra[base::CONFIRMED_AS], *opening);
+            assert_eq!(events[index].native["session_id"], "session");
+            assert_eq!(events[index].native["uuid"], "combined");
+            assert_eq!(events[index].model, "model");
+        }
+        assert_eq!(stream.expected, ["later"]);
+        let later = feed(
+            &mut stream,
+            json!({"type": "user", "isReplay": true, "message": {"content": "later"}}),
+        );
+        assert_eq!(later.len(), 1);
+        assert_eq!(later[0].extra[base::CONFIRMED_AS], event_type::INJECTED);
+        assert!(stream.expected.is_empty());
+    }
+
+    #[test]
+    fn coalesced_replay_preserves_duplicate_delivery_count() {
+        let mut stream = Stream::default();
+        for _ in 0..3 {
+            stream.expect_user("same\n");
+        }
+        let replay = json!({
+            "type": "user", "isReplay": true,
+            "message": {"content": [
+                {"type": "text", "text": "same\n"},
+                {"type": "text", "text": "same\n"}
+            ]}
+        });
+        assert_eq!(feed(&mut stream, replay.clone()).len(), 2);
+        assert!(feed(&mut stream, replay).is_empty());
+        assert_eq!(stream.expected, ["same\n"]);
+    }
+
+    #[test]
+    fn coalesced_replay_requires_the_complete_exact_fifo_prefix() {
+        let mut stream = Stream::default();
+        stream.expect_user("one\n");
+        stream.expect_user("two");
+        for content in [
+            json!([]),
+            json!([{"type": "text", "text": "two"}]),
+            json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "other"}]),
+            json!([{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]),
+            json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "two"}, {"type": "text", "text": "extra"}]),
+            json!([{"type": "text", "text": "one\n"}, {"type": "unknown", "text": "two"}]),
+        ] {
+            assert!(
+                feed(
+                    &mut stream,
+                    json!({"type": "user", "isReplay": true, "message": {"content": content}}),
+                )
+                .is_empty()
+            );
+            assert_eq!(stream.expected, ["one\n", "two"]);
+            assert!(!stream.turn_open);
         }
     }
 

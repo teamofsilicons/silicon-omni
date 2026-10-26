@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- Acknowledge each queued message when Claude combines multiple inputs into one replay, so later deliveries continue instead of waiting indefinitely.
+- Validate the complete replay against the queued messages before acknowledging any of them, preserving exact text, whitespace, and duplicate-message counts.
+
 ## 0.10.2
 
 - Preserve whitespace in Claude replay acknowledgements, including the final newline in YAML messages, so accepted messages receive START or INJECTED and queued deliveries can advance.
