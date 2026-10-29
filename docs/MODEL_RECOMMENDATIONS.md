@@ -1,6 +1,6 @@
 # Model recommendations
 
-As of **2026-10-15**. The catalog is [apps/web/models.json](../apps/web/models.json).
+Model metadata checked **2026-10-15**, with the writing shortlist and GPT-6.1 Terra updated **2026-10-29**. The catalog is [apps/web/models.json](../apps/web/models.json).
 
 Omni's category recommendations are configured priorities for seven kinds of work. The ordering and effort levels below are deliberate routing choices. They are not claims that one model wins every comparison, and no new Omni benchmark was run for this update.
 
@@ -16,14 +16,14 @@ The first eligible pick on a signed-in provider wins. Argon needs a positive mod
 | `research` | GPT-6 Astra · max | Claude Opus 5.5 · max | Gemini 4 Argon · high if available, otherwise Gemini 3.8 Flash · high |
 | `cost` | GPT-6.1 Sol · low | Claude Sonnet 5.5 · low | Gemini 3.8 Flash · high |
 | `general` | Claude Sonnet 5.5 · max | GPT-6.1 Sol · max | Gemini 4 Argon · high if available, otherwise Gemini 3.8 Flash · high |
-| `writing` | Claude Sonnet 5.5 · max | GPT-6.1 Sol · max | Gemini 4 Argon · high if available, otherwise Gemini 3.8 Flash · high |
+| `writing` | Claude Opus 5.5 · max | Claude Sonnet 5.5 · max | GPT-6.1 Terra · max, then Gemini 4 Argon · high if available, otherwise Gemini 3.8 Flash · high |
 
 \* **Sonnet does not support Claude Code fast mode.** The fast shortlist keeps Sonnet 5.5 medium at normal speed. Enabling fast mode on an unsupported model changes it to Opus, so the catalog does not label Sonnet as fast or silently substitute Opus. Supported Claude fast models are Opus 5.5, Opus 5, and Opus 4.8. [Claude Code fast-mode support](https://code.claude.com/docs/en/fast-mode).
 
 ### Effort and availability
 
 - `fast` uses Sol high with its faster service tier; `cost` uses Sol low without that tier. Their names describe routing policy, not measured cross-provider latency or cost winners.
-- `code`, `design`, and `research` prioritize Opus or Astra at max as shown. `general` and `writing` prioritize Sonnet max, then Sol max. Explicit max is intentional and can consume more time and credits than lower effort.
+- `code`, `design`, and `research` prioritize Opus or Astra at max as shown. `general` prioritizes Sonnet max, then Sol max. `writing` prioritizes Opus max, Sonnet max, then Terra max before the Argon/Flash pair. Explicit max is intentional and can consume more time and credits than lower effort.
 - Every Gemini shortlist choice uses high effort, encoded in its CLI model ID. Argon's exact ID is `gemini-4-argon-high`; the CLI also documents `gemini-4-argon-medium`, which is not used in these shortlists. [Antigravity CLI model selection](https://www.antigravity.google/docs/cli/headless/#select-a-model-effort-or-agent).
 - Argon is a current model requiring Google AI Ultra or Enterprise access. Its catalog row and picks set `requires_availability: true`. Clients report available model IDs by provider, and the selector skips a gated pick without positive evidence for that exact ID. Each Argon entry is immediately followed by `gemini-3.8-flash-high`. [Antigravity model availability](https://www.antigravity.google/docs/models/).
 
@@ -32,6 +32,7 @@ The first eligible pick on a signed-in provider wins. Argon needs a positive mod
 | Provider | Model ID | Catalog efforts |
 | --- | --- | --- |
 | Codex | `gpt-6.1-sol` | low, medium, high, xhigh, max |
+| Codex | `gpt-6.1-terra` | max |
 | Codex | `gpt-6-luna` | low, medium, high, xhigh, max |
 | Codex | `gpt-6-astra` | low, medium, high, xhigh, max |
 | Claude Code | `claude-opus-5-5` | low, medium, high, xhigh, max |
@@ -41,6 +42,8 @@ The first eligible pick on a signed-in provider wins. Argon needs a positive mod
 | Antigravity | `gemini-4-argon-high` | empty separate effort; high encoded in ID; availability required |
 
 The installed Codex model cache, refreshed on the check date, confirms the GPT-6 and GPT-5.6 IDs. Its default for GPT-6.1 Sol is `low`, while the API documentation defaults to `medium`; Omni therefore sends an explicit effort. The Luna API supports `none`, but the local Codex model metadata does not expose it. Sol and Astra also expose Codex `ultra`, which combines maximum reasoning with delegation; no measured `ultra` row is inferred from `max`. [Sol API settings](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Luna API settings](https://developers.openai.com/api/docs/models/gpt-6-luna), [Codex model controls](https://learn.chatgpt.com/docs/models).
+
+GPT-6.1 Terra supports `max` effort in both the official API documentation and the local Codex model cache checked on October 29. Its new catalog row keeps benchmark scores, cost, and timing unmeasured. [Terra model settings](https://developers.openai.com/api/docs/models/gpt-6.1-terra).
 
 Claude Code 2.1.289 was installed at verification time. Its documentation supports all five listed efforts for the Claude 5.5 family and defaults these models to `medium`. Exact account access was not tested by running inference. [Claude Code model configuration](https://code.claude.com/docs/en/model-config).
 
@@ -70,6 +73,6 @@ GPT-5.5 retired from **ChatGPT-authenticated Codex** on October 14, 2026 at 19:0
 
 Gemini 3.6 Flash's historical row is marked `restricted` because current Antigravity docs list Enterprise-only access. Gemini 3.5 Flash's historical row is `legacy`; neither appeared in the checked account's current model list. [Antigravity model availability](https://www.antigravity.google/docs/models/).
 
-All **28 imported measurement rows** keep their exact original `scores`, `price`, and `secs`. The **29 newly added rows**, including Argon high, set those three fields to `null`. The catalog contains 57 configurations across 22 model IDs. Original provenance stays in the catalog's `source` field; the October references support model metadata and recommendations, not a rerun of those older measurements. Vendor launch results use different benchmark versions, effort settings, and harnesses, so they are not copied into the existing board.
+All **28 imported measurement rows** keep their exact original `scores`, `price`, and `secs`. The **30 newly added rows**, including Argon high and Terra max, set those three fields to `null`. The catalog contains 58 configurations across 23 model IDs. Original provenance stays in the catalog's `source` field; the October references support model metadata and recommendations, not a rerun of those older measurements. Vendor launch results use different benchmark versions, effort settings, and harnesses, so they are not copied into the existing board.
 
 The measured numeric dial cannot infer positions for unmeasured new models. Keep its measurement semantics separate from a curated routing policy, and do not substitute API token prices for its per-task cost field. Legacy rows are retained for history and explicit selection; current category defaults never select GPT-5.6 or GPT-5.5.

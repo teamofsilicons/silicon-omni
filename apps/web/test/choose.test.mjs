@@ -115,7 +115,7 @@ test("all seven configured category defaults match the requested efforts and pri
     fast: ["gpt-6.1-sol", "high", true], cost: ["gpt-6.1-sol", "low", false],
     code: ["claude-opus-5-5", "max", false], general: ["claude-sonnet-5-5", "max", false],
     design: ["claude-opus-5-5", "max", false], research: ["gpt-6-astra", "max", false],
-    writing: ["claude-sonnet-5-5", "max", false],
+    writing: ["claude-opus-5-5", "max", false],
   }
   assert.deepEqual(Object.keys(DOC.keys).sort(), Object.keys(expected).sort())
   for (const [key, pick] of Object.entries(expected)) {
