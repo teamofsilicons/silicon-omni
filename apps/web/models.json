@@ -163,6 +163,19 @@
     },
     {
       "provider": "codex-app-server",
+      "model": "gpt-6.1-terra",
+      "effort": "max",
+      "scores": null,
+      "price": null,
+      "secs": null,
+      "status": "current",
+      "notes": "Writing and revision model. Writing recommendations explicitly use max effort; model ID and effort verified on 2026-10-29.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-terra"
+      ]
+    },
+    {
+      "provider": "codex-app-server",
       "model": "gpt-6-luna",
       "effort": "low",
       "scores": null,
@@ -1442,12 +1455,17 @@
       "picks": [
         {
           "provider": "claude-code-cli",
+          "model": "claude-opus-5-5",
+          "effort": "max"
+        },
+        {
+          "provider": "claude-code-cli",
           "model": "claude-sonnet-5-5",
           "effort": "max"
         },
         {
           "provider": "codex-app-server",
-          "model": "gpt-6.1-sol",
+          "model": "gpt-6.1-terra",
           "effort": "max"
         },
         {
