@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.4
+
+- Acknowledge messages Claude takes mid-turn. Claude replays them from its rewritten queued command without the final newline, so they never received INJECTED; the trimmed echo now confirms the original message.
+- An unrecognized echo no longer stalls acknowledgements for the rest of a Claude session: a later message's echo also confirms the earlier ones Claude has already read, marked `inferred`, instead of leaving them pending and eligible for resend after failover.
+
 ## 0.10.3
 
 - Acknowledge each queued message when Claude combines multiple inputs into one replay, so later deliveries continue instead of waiting indefinitely.

@@ -231,29 +231,43 @@ impl Stream {
             }
             _ => return Vec::new(),
         };
-        if texts.is_empty()
-            || !texts
-                .iter()
-                .copied()
-                .eq(self.expected.iter().take(texts.len()).map(String::as_str))
-        {
+        if texts.is_empty() || texts.len() > self.expected.len() {
             return Vec::new();
         }
-        let mut events = Vec::with_capacity(texts.len());
-        for text in texts {
-            self.expected.pop_front();
+        // Claude reads stdin in order, so an echo of a later line proves every line
+        // before it was already taken, even one whose own echo went unrecognized.
+        // Confirming those keeps one missed echo from stalling every later receipt.
+        let Some(skipped) = (0..=self.expected.len() - texts.len()).find(|&start| {
+            texts
+                .iter()
+                .zip(self.expected.iter().skip(start))
+                .all(|(echo, line)| same_message(echo, line))
+        }) else {
+            return Vec::new();
+        };
+        let mut events = Vec::with_capacity(skipped + texts.len());
+        for index in 0..skipped + texts.len() {
+            let Some(text) = self.expected.pop_front() else {
+                break;
+            };
             let opening = if self.turn_open {
                 event_type::INJECTED
             } else {
                 event_type::START
             };
             self.turn_open = true;
-            let mut event = base::confirmed(text, opening)
+            // Confirm the line omni wrote, not Claude's rewrite of it: the conductor
+            // and its clients match acknowledgements against the exact text sent.
+            let mut event = base::confirmed(&text, opening)
                 .from(super::NAME)
                 .about(&self.model);
-            for key in ["session_id", "uuid", "timestamp"] {
-                if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
-                    event.native.insert(key.into(), value.clone());
+            if index < skipped {
+                event.extra.insert("inferred".into(), json!(true));
+            } else {
+                for key in ["session_id", "uuid", "timestamp"] {
+                    if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
+                        event.native.insert(key.into(), value.clone());
+                    }
                 }
             }
             if !self.session_id.is_empty() && !event.native.contains_key("session_id") {
@@ -358,6 +372,13 @@ impl Stream {
         self.turn_open = false;
         events
     }
+}
+
+/// Claude echoes a line as written when it starts a turn, but a line it takes
+/// mid-turn comes back as a rewritten `queued_command` with its surrounding
+/// whitespace trimmed. An echo is never padded, and never trimmed to nothing.
+fn same_message(echo: &str, line: &str) -> bool {
+    echo == line || (!echo.is_empty() && (echo == line.trim() || echo == line.trim_end()))
 }
 
 fn replay_echo(data: &Value) -> bool {
@@ -674,15 +695,15 @@ mod tests {
     }
 
     #[test]
-    fn coalesced_replay_requires_the_complete_exact_fifo_prefix() {
+    fn coalesced_replay_requires_every_block_in_fifo_order() {
         let mut stream = Stream::default();
         stream.expect_user("one\n");
         stream.expect_user("two");
         for content in [
             json!([]),
-            json!([{"type": "text", "text": "two"}]),
+            json!([{"type": "text", "text": "two"}, {"type": "text", "text": "one\n"}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "other"}]),
-            json!([{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]),
+            json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "two "}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "two"}, {"type": "text", "text": "extra"}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "unknown", "text": "two"}]),
         ] {
@@ -722,6 +743,83 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].extra[base::CONFIRMED_AS], event_type::START);
         assert_eq!(events[0].text, "hello");
+    }
+
+    #[test]
+    fn a_line_taken_mid_turn_is_confirmed_by_its_trimmed_queued_echo() {
+        // Claude 2.1 starts a turn with the exact line, but replays a line it
+        // takes mid-turn from its rewritten `queued_command`, without the final
+        // newline. The confirmation still carries the line omni wrote.
+        let mut stream = Stream::default();
+        let first = "type: dm.sync.changed\nid: '001'\n";
+        let second = "type: dm.sync.changed\nid: '002'\n";
+        let third = "type: dm.sync.changed\nid: '003'\n";
+        stream.expect_user(first);
+        let started = feed(
+            &mut stream,
+            json!({"type": "user", "isReplay": true, "message": {"content": [{"type": "text", "text": first}]}}),
+        );
+        assert_eq!(started[0].extra[base::CONFIRMED_AS], event_type::START);
+
+        stream.expect_user(second);
+        let injected = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true, "uuid": "queued",
+                "message": {"role": "user", "content": [{"type": "text", "text": second.trim_end()}]}
+            }),
+        );
+        assert_eq!(injected.len(), 1);
+        assert_eq!(injected[0].extra[base::CONFIRMED_AS], event_type::INJECTED);
+        assert_eq!(injected[0].text, second);
+        assert_eq!(injected[0].native["uuid"], "queued");
+        assert!(injected[0].extra.get("inferred").is_none());
+
+        feed(
+            &mut stream,
+            json!({"type": "result", "subtype": "success", "is_error": false}),
+        );
+        stream.expect_user(third);
+        let next = feed(
+            &mut stream,
+            json!({"type": "user", "isReplay": true, "message": {"content": third}}),
+        );
+        assert_eq!(next[0].extra[base::CONFIRMED_AS], event_type::START);
+        assert!(stream.expected.is_empty());
+    }
+
+    #[test]
+    fn a_later_echo_confirms_lines_whose_own_echo_was_unrecognized() {
+        let mut stream = Stream::new("model");
+        stream.session_id = "session".into();
+        for line in ["lost\n", "found\n", "after"] {
+            stream.expect_user(line);
+        }
+        assert!(
+            feed(
+                &mut stream,
+                json!({"type": "user", "isReplay": true, "message": {"content": "an unknown rewrite of lost"}}),
+            )
+            .is_empty()
+        );
+        let events = feed(
+            &mut stream,
+            json!({"type": "user", "isReplay": true, "uuid": "u2", "message": {"content": "found\n"}}),
+        );
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].text, "lost\n");
+        assert_eq!(events[0].extra[base::CONFIRMED_AS], event_type::START);
+        assert_eq!(events[0].extra["inferred"], true);
+        assert!(
+            events[0].native.get("uuid").is_none(),
+            "the echo was not its own"
+        );
+        assert_eq!(events[0].native["session_id"], "session");
+        assert_eq!(events[1].text, "found\n");
+        assert_eq!(events[1].extra[base::CONFIRMED_AS], event_type::INJECTED);
+        assert!(events[1].extra.get("inferred").is_none());
+        assert_eq!(events[1].native["uuid"], "u2");
+        assert_eq!(stream.expected, ["after"]);
     }
 
     #[test]

@@ -200,9 +200,14 @@ missed history into a process that is already reading, so a stale parked Claude 
 is restarted. Codex catches up with `thread/inject_items`. Antigravity has no structural
 seed operation; missed history is rendered into the front of its next user message.
 
-Delivery is not inferred uniformly across unlike protocols. Claude's exact
+Delivery is not inferred uniformly across unlike protocols. Claude's
 `--replay-user-messages` echo confirms which FIFO user line landed; unrelated replay
-chatter is ignored. Codex confirms `turn/steer` or `turn/start` directly. Antigravity
+chatter is ignored. A line that starts a turn echoes exactly, but one taken mid-turn
+echoes from Claude's rewritten `queued_command`, with surrounding whitespace trimmed,
+so that trimmed form also matches; the confirmation always carries the line omni
+wrote. Claude reads its input in order, so an echo of a later line also confirms
+earlier lines whose own echo went unrecognized, marked `inferred`, rather than
+leaving every later acknowledgement stuck behind them. Codex confirms `turn/steer` or `turn/start` directly. Antigravity
 accepts a mid-turn write as a distinct next native turn. The conductor records
 `START`/`INJECTED` only at the corresponding provider boundary and keeps native IDs on
 the resulting events.
