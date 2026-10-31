@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.5
+
+- Acknowledge every message when Claude merges queued messages into one replay. Claude ends each block but the last with an added newline, which 0.10.4 rejected as padding, so the whole batch stayed pending: three identical heartbeats left a session looking busy and every later heartbeat skipped. Trailing whitespace may now differ in either direction; an echo with added leading whitespace, or an empty one, still never matches.
+
 ## 0.10.4
 
 - Acknowledge messages Claude takes mid-turn. Claude replays them from its rewritten queued command without the final newline, so they never received INJECTED; the trimmed echo now confirms the original message.

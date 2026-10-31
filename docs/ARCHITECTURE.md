@@ -202,9 +202,11 @@ seed operation; missed history is rendered into the front of its next user messa
 
 Delivery is not inferred uniformly across unlike protocols. Claude's
 `--replay-user-messages` echo confirms which FIFO user line landed; unrelated replay
-chatter is ignored. A line that starts a turn echoes exactly, but one taken mid-turn
-echoes from Claude's rewritten `queued_command`, with surrounding whitespace trimmed,
-so that trimmed form also matches; the confirmation always carries the line omni
+chatter is ignored. A line that starts a turn alone echoes exactly, but one taken
+mid-turn echoes from Claude's rewritten `queued_command`, with surrounding whitespace
+trimmed, and lines merged into one replay each gain a trailing newline except the last.
+So trailing whitespace may differ either way, while leading whitespace and an empty
+echo never match; the confirmation always carries the line omni
 wrote. Claude reads its input in order, so an echo of a later line also confirms
 earlier lines whose own echo went unrecognized, marked `inferred`, rather than
 leaving every later acknowledgement stuck behind them. Codex confirms `turn/steer` or `turn/start` directly. Antigravity

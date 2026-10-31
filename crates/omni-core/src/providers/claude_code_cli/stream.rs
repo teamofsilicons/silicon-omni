@@ -374,11 +374,17 @@ impl Stream {
     }
 }
 
-/// Claude echoes a line as written when it starts a turn, but a line it takes
-/// mid-turn comes back as a rewritten `queued_command` with its surrounding
-/// whitespace trimmed. An echo is never padded, and never trimmed to nothing.
+/// Claude echoes a line as written when it starts a turn with it alone. A line it
+/// takes mid-turn comes back from its rewritten `queued_command` with surrounding
+/// whitespace trimmed, and when it merges queued lines into one replay every block
+/// but the last gains a trailing newline. So trailing whitespace may differ either
+/// way, but an echo never gains leading whitespace and is never empty.
 fn same_message(echo: &str, line: &str) -> bool {
-    echo == line || (!echo.is_empty() && (echo == line.trim() || echo == line.trim_end()))
+    if echo == line {
+        return true;
+    }
+    let echo = echo.trim_end();
+    !echo.is_empty() && (echo == line.trim_end() || echo == line.trim())
 }
 
 fn replay_echo(data: &Value) -> bool {
@@ -703,7 +709,7 @@ mod tests {
             json!([]),
             json!([{"type": "text", "text": "two"}, {"type": "text", "text": "one\n"}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "other"}]),
-            json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "two "}]),
+            json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": " two"}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "text", "text": "two"}, {"type": "text", "text": "extra"}]),
             json!([{"type": "text", "text": "one\n"}, {"type": "unknown", "text": "two"}]),
         ] {
@@ -720,10 +726,43 @@ mod tests {
     }
 
     #[test]
-    fn a_whitespace_mismatch_cannot_confirm_the_expected_user() {
+    fn merged_identical_lines_each_confirm_despite_the_added_newlines() {
+        // Claude 2.1 merges queued lines into one replay, ending every block but
+        // the last with a newline. Three identical heartbeats came back this way.
+        let heartbeat = "This is a heartbeat. Make it count.";
+        let mut stream = Stream::default();
+        for _ in 0..3 {
+            stream.expect_user(heartbeat);
+        }
+        let events = feed(
+            &mut stream,
+            json!({
+                "type": "user", "isReplay": true,
+                "message": {"content": [
+                    {"type": "text", "text": format!("{heartbeat}\n")},
+                    {"type": "text", "text": format!("{heartbeat}\n")},
+                    {"type": "text", "text": heartbeat}
+                ]}
+            }),
+        );
+        assert_eq!(events.len(), 3);
+        for (event, opening) in events.iter().zip([
+            event_type::START,
+            event_type::INJECTED,
+            event_type::INJECTED,
+        ]) {
+            assert_eq!(event.text, heartbeat);
+            assert_eq!(event.extra[base::CONFIRMED_AS], opening);
+            assert!(event.extra.get("inferred").is_none());
+        }
+        assert!(stream.expected.is_empty());
+    }
+
+    #[test]
+    fn a_leading_whitespace_or_empty_echo_cannot_confirm_the_expected_user() {
         let mut stream = Stream::default();
         stream.expect_user("hello");
-        for text in ["hello\n", " hello", "hello "] {
+        for text in [" hello", "\thello", " ", ""] {
             assert!(
                 feed(
                     &mut stream,
